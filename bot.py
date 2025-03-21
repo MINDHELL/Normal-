@@ -1,19 +1,34 @@
+import asyncio
+import threading
+from flask import Flask
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from motor.motor_asyncio import AsyncIOMotorClient
 from config import API_ID, API_HASH, BOT_TOKEN, MONGO_URL, OWNER_ID, FORCE_SUB_CHANNEL, DAILY_LIMIT, AUTO_DELETE_TIME, WELCOME_IMAGE
-import asyncio
 
+# Initialize Bot
 bot = Client("video_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+
+# Connect to MongoDB
 db_client = AsyncIOMotorClient(MONGO_URL)
 db = db_client["video_bot"]
 users_db = db["users"]
 videos_db = db["videos"]
 
-# Force Sub Function
+# Flask Web Server for Koyeb TCP Health Check Fix
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "Bot is running!"
+
+def run_web():
+    app.run(host="0.0.0.0", port=8080)
+
+# Force Subscription Function
 async def is_subscribed(client, user_id):
     if user_id == OWNER_ID:
-        return True  # Owner bypass
+        return True  # Owner bypasses force sub
     try:
         member = await client.get_chat_member(FORCE_SUB_CHANNEL, user_id)
         return member.status in ["member", "administrator", "creator"]
@@ -26,12 +41,12 @@ async def start(client, message):
     user_id = message.from_user.id
     if not await is_subscribed(client, user_id):
         return await message.reply_text(
-            "🔴 You must join our channel first!", 
+            "🔴 You must join our channel first!",
             reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Join Channel", url=f"https://t.me/{FORCE_SUB_CHANNEL}")]])
         )
-    
+
     await message.reply_photo(
-        WELCOME_IMAGE, 
+        WELCOME_IMAGE,
         caption="👋 Welcome to the bot!\nEnjoy random videos.",
         reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("Get Video 🎥", callback_data="get_video")]])
     )
@@ -71,7 +86,11 @@ async def count_files(client, message):
     total_files = await videos_db.count_documents({})
     await message.reply_text(f"📁 Total indexed videos: {total_files}")
 
+# Start Flask Web Server for Koyeb Health Check
+threading.Thread(target=run_web).start()
+
 # Start Limit Reset Task
 bot.loop.create_task(reset_limits())
 
+# Run the Bot
 bot.run()
