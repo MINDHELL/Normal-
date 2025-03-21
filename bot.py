@@ -63,7 +63,7 @@ async def send_video(client, callback_query):
         await users_db.insert_one({"user_id": user_id, "daily_videos": 0})
 
     user = await users_db.find_one({"user_id": user_id})
-    if user["daily_videos"] >= DAILY_LIMIT:
+    if int(user["daily_videos"]) >= int(DAILY_LIMIT):
         return await callback_query.answer("⚠️ Daily limit reached! Try again tomorrow.", show_alert=True)
 
     video = await videos_db.find_one({}, sort=[("timestamp", -1)])
