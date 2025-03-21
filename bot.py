@@ -2,6 +2,7 @@ import os
 import logging
 import random
 import threading
+import asyncio
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
@@ -58,6 +59,8 @@ async def send_random_video(client, chat_id):
             # 🔰 Auto-delete feature
             await asyncio.sleep(AUTO_DELETE_TIME)
             await sent_msg.delete()
+        else:
+            await client.send_message(chat_id, "⚠ Error fetching video. Try again later.")
     except Exception as e:
         logger.error(f"Error sending video: {e}")
         await client.send_message(chat_id, "⚠ Error fetching video. Try again later.")
