@@ -8,7 +8,7 @@ import datetime
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
-from pyrogram.errors import UserNotParticipant, FloodWait, MessageNotFound
+from pyrogram.errors import UserNotParticipant, FloodWait
 from health_check import start_health_check
 
 # 🔰 Logging Setup
