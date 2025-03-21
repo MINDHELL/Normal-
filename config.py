@@ -10,5 +10,5 @@ OWNER_ID = int("6860316927")  # Replace with your Telegram user ID
 FORCE_SUB_CHANNEL = "@test89p"  # Channel username for force subscription
 DAILY_LIMIT = "10"  # Maximum videos per user per day
 AUTO_DELETE_TIME = "180"  # Time (in seconds) before auto-deleting sent videos
-WELCOME_IMAGE_URL = "https://envs.sh/nek.jpg"  # Welcome image URL
+WELCOME_IMAGE = "https://envs.sh/nek.jpg"  # Welcome image URL
 WELCOME_MESSAGE = "👋 Welcome to Random Video Bot! Click below to get a video."
