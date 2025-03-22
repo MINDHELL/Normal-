@@ -1,7 +1,6 @@
 import os
 import logging
 import random
-import threading
 import asyncio
 import time
 import datetime
@@ -53,7 +52,7 @@ async def get_user_quota(user_id):
     current_time = time.time()
 
     if user:
-        last_reset = user["last_reset"]
+        last_reset = user.get("last_reset", 0)
         if current_time - last_reset >= 21600:  # 🔰 6 hours
             users_db.update_one({"user_id": user_id}, {"$set": {"quota": VIDEO_LIMIT, "last_reset": current_time}})
             return VIDEO_LIMIT
