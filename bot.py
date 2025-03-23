@@ -1,6 +1,5 @@
 import os
 import logging
-import random
 import asyncio
 import threading
 from pyrogram import Client, filters
@@ -75,7 +74,7 @@ async def delete_after(message):
 @bot.on_callback_query(filters.regex("get_random_video"))
 async def random_video_callback(client, callback_query: CallbackQuery):
     """Handles the button click instantly without delay."""
-    await callback_query.answer()
+    await callback_query.answer(cache_time=1)  # ✅ Fix: Avoid QueryIdInvalid error
     asyncio.create_task(send_random_video(client, callback_query.message.chat.id))
 
 @bot.on_message(filters.command("start"))
@@ -94,10 +93,39 @@ async def start(client, message):
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")],
+        [InlineKeyboardButton("ℹ About", callback_data="about_bot")]
     ])
     await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Video Bot!", reply_markup=keyboard)
 
+@bot.on_callback_query(filters.regex("about_bot"))
+async def about_callback(client, callback_query: CallbackQuery):
+    """Handles the About section."""
+    await callback_query.answer()
+    await callback_query.message.edit_text(
+        "🤖 **Bot Info:**\n"
+        "- **Name:** Video Bot\n"
+        "- **Developer:** @YourUsername\n"
+        "- **Powered By:** Pyrogram\n"
+        "- **Hosting:** Koyeb\n",
+        reply_markup=InlineKeyboardMarkup([[InlineKeyboardButton("⬅ Back", callback_data="back_to_main")]])
+    )
+
+@bot.on_callback_query(filters.regex("back_to_main"))
+async def back_to_main(client, callback_query: CallbackQuery):
+    """Back to main menu."""
+    await callback_query.answer()
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")],
+        [InlineKeyboardButton("ℹ About", callback_data="about_bot")]
+    ])
+    await callback_query.message.edit_text("🎉 Welcome to the Video Bot!", reply_markup=keyboard)
+
+async def main():
+    """Main function to run the bot properly inside an event loop."""
+    await prefetch_videos()  # ✅ Ensure prefetch runs inside event loop
+    await bot.start()
+    await asyncio.Event().wait()  # Keeps the bot running
+
 if __name__ == "__main__":
-    threading.Thread(target=start_health_check, daemon=True).start()
-    asyncio.create_task(prefetch_videos())  # Start background prefetching
-    bot.run()
+    threading.Thread(target=start_health_check, daemon=True).start()  # Health Check
+    asyncio.run(main())  # ✅ Properly start the bot with an event loop
