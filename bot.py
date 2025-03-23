@@ -2,10 +2,12 @@ import os
 import logging
 import random
 import asyncio
+import threading
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
 from pyrogram.errors import UserNotParticipant, FloodWait
+from health_check import start_health_check
 
 # 🔰 Logging Setup
 logging.basicConfig(level=logging.INFO)
@@ -20,16 +22,15 @@ CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002465297334"))
 OWNER_ID = int(os.getenv("OWNER_ID", "6860316927"))
 AUTH_CHANNEL = [int(ch) for ch in os.getenv("AUTH_CHANNEL", "-1002490575006").split()]
 WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
-AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "10"))  # ⏳ Faster deletion
-RATE_LIMIT_DELAY = 1  # ⏳ Delay to prevent FloodWait
+AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "20"))
 
 # 🔰 Initialize Bot & Database
-bot = Client("fast_video_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
-mongo = MongoClient(MONGO_URL, maxPoolSize=50)  # 🚀 Connection Pooling
+bot = Client("video_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
+mongo = MongoClient(MONGO_URL)
 db = mongo["VideoBot"]
 collection = db["videos"]
 
-# ✅ **Force Subscription Checker**
+# 🔰 Check Subscription
 async def is_subscribed(client, user_id):
     for channel in AUTH_CHANNEL:
         try:
@@ -39,14 +40,14 @@ async def is_subscribed(client, user_id):
             return False, chat.invite_link
     return True, None
 
-# ✅ **Send Random Video Faster with Task Queues**
+# 🔰 Fetch & Send Random Video
 async def send_random_video(client, chat_id):
-    video_docs = list(collection.find())
+    video_docs = list(collection.aggregate([{ "$sample": { "size": 1 } }]))  # 🔥 Faster Random Selection
     if not video_docs:
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
         return
-
-    random_video = random.choice(video_docs)
+    
+    random_video = video_docs[0]
     try:
         message = await client.get_messages(CHANNEL_ID, random_video["message_id"])
         if message and message.video:
@@ -55,20 +56,18 @@ async def send_random_video(client, chat_id):
                 video=message.video.file_id,
                 caption="Thanks 😊"
             )
-            # 🔰 Auto-delete after `AUTO_DELETE_TIME`
-            asyncio.create_task(delete_after_delay(sent_msg))
+            # 🔰 Auto-delete after set time
+            await asyncio.sleep(AUTO_DELETE_TIME)
+            await sent_msg.delete()
     except FloodWait as e:
-        logger.warning(f"FloodWait: Sleeping for {e.value} seconds")
+        logger.warning(f"FloodWait detected: Sleeping for {e.value} seconds")
         await asyncio.sleep(e.value)
+        await send_random_video(client, chat_id)  # Retry after delay
     except Exception as e:
         logger.error(f"Error sending video: {e}")
+        await client.send_message(chat_id, "⚠ Error fetching video. Try again later.")
 
-# ✅ **Auto-delete messages faster**
-async def delete_after_delay(message):
-    await asyncio.sleep(AUTO_DELETE_TIME)
-    await message.delete()
-
-# ✅ **Owner-Only Command to Index Videos**
+# 🔰 Index Videos (Owner Only)
 @bot.on_message(filters.command("index") & filters.user(OWNER_ID))
 async def index_videos(client, message):
     await message.reply_text("🔄 Indexing videos... Please wait.")
@@ -76,15 +75,20 @@ async def index_videos(client, message):
     indexed_count = 0
     last_indexed = collection.find_one(sort=[("message_id", -1)])
     last_message_id = last_indexed["message_id"] if last_indexed else 1
-    batch_size = 50  # 🚀 Smaller batch size for faster processing
+    batch_size = 100
 
     while True:
         try:
-            messages = await client.get_messages(CHANNEL_ID, range(last_message_id, last_message_id + batch_size))
-            video_entries = [{"message_id": msg.id} for msg in messages if msg and msg.video]
+            message_ids = list(range(last_message_id, last_message_id + batch_size))
+            messages = await client.get_messages(CHANNEL_ID, message_ids)
+
+            video_entries = [
+                {"message_id": msg.id}
+                for msg in messages if msg and msg.video and not collection.find_one({"message_id": msg.id})
+            ]
 
             if video_entries:
-                collection.insert_many(video_entries, ordered=False)
+                collection.insert_many(video_entries)
                 indexed_count += len(video_entries)
 
             last_message_id += batch_size
@@ -94,15 +98,18 @@ async def index_videos(client, message):
             logger.error(f"Indexing error: {e}")
             break
 
-    await message.reply_text(f"✅ Indexed {indexed_count} new videos!" if indexed_count else "⚠ No new videos found!")
+    if indexed_count:
+        await message.reply_text(f"✅ Indexed {indexed_count} new videos!")
+    else:
+        await message.reply_text("⚠ No new videos found!")
 
-# ✅ **Check Total Indexed Files**
+# 🔰 Check Total Indexed Files (Owner Only)
 @bot.on_message(filters.command("files") & filters.user(OWNER_ID))
 async def check_files(client, message):
     total_videos = collection.count_documents({})
     await message.reply_text(f"📂 Total Indexed Videos: {total_videos}")
 
-# ✅ **Start Command with Faster FSub Check**
+# 🔰 Start Command (Welcome & FSub Check)
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     user_id = message.from_user.id
@@ -120,27 +127,27 @@ async def start(client, message):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")],
     ])
-    await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Fast Video Bot!", reply_markup=keyboard)
+    await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Video Bot!", reply_markup=keyboard)
 
-# ✅ **Callback for Fast Random Video Sending**
+# 🔰 Callback for Getting Random Video
 @bot.on_callback_query(filters.regex("get_random_video"))
 async def random_video_callback(client, callback_query: CallbackQuery):
-    asyncio.create_task(send_random_video(client, callback_query.message.chat.id))  # 🚀 Run as async task
+    await send_random_video(client, callback_query.message.chat.id)
     await callback_query.answer()
 
-# ✅ **About Command**
+# 🔰 About Command
 @bot.on_message(filters.command("about"))
 async def about(client, message):
     await message.reply_text(
-        "🤖 **Bot Name:** Fast Video Bot\n"
+        "🤖 **Bot Name:** Random Video Bot\n"
         "👑 **Owner:** @YourUsername\n"
-        "🔧 **Version:** 2.1 Optimized\n"
-        "💾 **Database:** MongoDB (Fast Querying)\n"
-        "🚀 **Hosted On:** Koyeb (Scalable)",
+        "🔧 **Version:** 2.0 (Optimized)\n"
+        "💾 **Database:** MongoDB\n"
+        "🚀 **Hosted On:** Koyeb",
         disable_web_page_preview=True
     )
 
-# ✅ **Run the Bot Efficiently**
+# 🔰 Run the Bot
 if __name__ == "__main__":
-    bot.start()  # 🚀 Start without blocking
-    asyncio.get_event_loop().run_forever()
+    threading.Thread(target=start_health_check, daemon=True).start()
+    bot.run()
