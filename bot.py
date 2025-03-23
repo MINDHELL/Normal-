@@ -109,5 +109,5 @@ async def about(client, message):
         )
     if __name__ == "__main__":
         threading.Thread(target=start_health_check, daemon=True).start()
-        asyncio.create_task(prefetch_videos())  # Start background prefetching
-bot.run()
+        asyncio.create_task(prefetch_videos())
+        bot.run()
