@@ -3,6 +3,7 @@ import logging
 import random
 import asyncio
 import threading
+import re
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
@@ -16,13 +17,16 @@ logger = logging.getLogger(__name__)
 # 🔰 Environment Variables
 API_ID = int(os.getenv("API_ID", "27788368"))
 API_HASH = os.getenv("API_HASH", "9df7e9ef3d7e4145270045e5e43e1081")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7692429836:AAHyUFP6os1A3Hirisl5TV1O5kArGAlAEuQ")
-MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://aarshhub:6L1PAPikOnAIHIRA@cluster0.6shiu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
+MONGO_URL = os.getenv("MONGO_URL", "YOUR_MONGO_URL")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002465297334"))
-OWNER_ID = int(os.getenv("OWNER_ID", "YOUR_TELEGRAM_ID"))
-AUTH_CHANNEL = [int(ch) for ch in os.getenv("AUTH_CHANNEL", "-1002490575006").split()]
+OWNER_ID = int(os.getenv("OWNER_ID", "27788368"))
 WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
 AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "20"))
+
+# 🔰 AUTH_CHANNEL Parsing
+id_pattern = re.compile(r'^.\d+$')
+AUTH_CHANNEL = [int(ch) if id_pattern.search(ch) else ch for ch in os.getenv("AUTH_CHANNEL", "-1002490575006").split()]
 
 # 🔰 Initialize Bot & Database
 bot = Client("video_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
@@ -83,10 +87,32 @@ async def delete_after(message):
     except Exception as e:
         logger.error(f"⚠ Error deleting message: {e}", exc_info=True)
 
+async def is_subscribed(bot, query, channel):
+    """Check if the user is subscribed to all required channels."""
+    btn = []
+    for id in channel:
+        try:
+            chat = await bot.get_chat(int(id))
+            await bot.get_chat_member(id, query.from_user.id)  # Check membership
+        except UserNotParticipant:
+            btn.append([InlineKeyboardButton(f'Join {chat.title}', url=chat.invite_link)])
+        except Exception as e:
+            logger.error(f"⚠ Subscription check error: {e}", exc_info=True)
+    return btn
+
 @bot.on_callback_query(filters.regex("get_random_video"))
 async def random_video_callback(client, callback_query: CallbackQuery):
     """Handles the button click instantly without delay."""
     try:
+        btn = await is_subscribed(client, callback_query, AUTH_CHANNEL)
+        if btn:
+            btn.append([InlineKeyboardButton("♻️ Try Again ♻️", callback_data="get_random_video")])
+            await callback_query.message.reply_text(
+                "<b>👋 Please join all required channels first, then click Try Again.</b>",
+                reply_markup=InlineKeyboardMarkup(btn)
+            )
+            return
+
         await callback_query.answer("⏳ Fetching video...", show_alert=False)
         asyncio.create_task(send_random_video(client, callback_query.message.chat.id))
     except RPCError as e:
@@ -99,14 +125,18 @@ async def start(client, message):
     """Handles /start command."""
     try:
         user_id = message.from_user.id
-        is_sub, invite_link = await is_subscribed(client, user_id)
+        btn = await is_subscribed(client, message, AUTH_CHANNEL)
 
-        if not is_sub:
-            keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🚀 Join & Try Again", url=invite_link)]])
+        if btn:
+            username = (await client.get_me()).username
+            if len(message.command) > 1:
+                btn.append([InlineKeyboardButton("♻️ Try Again ♻️", url=f"https://t.me/{username}?start={message.command[1]}")])
+            else:
+                btn.append([InlineKeyboardButton("♻️ Try Again ♻️", url=f"https://t.me/{username}?start=true")])
+
             await message.reply_text(
-                f"👋 Hello {message.from_user.mention},\n\n"
-                "You need to join our channel to use this bot! Click below 👇",
-                reply_markup=keyboard
+                f"<b>👋 Hello {message.from_user.mention},\n\nPlease join all required channels, then click Try Again. 😇</b>",
+                reply_markup=InlineKeyboardMarkup(btn)
             )
             return
 
@@ -117,21 +147,6 @@ async def start(client, message):
         logger.info(f"✅ User {user_id} started the bot.")
     except Exception as e:
         logger.error(f"⚠ Start command error: {e}", exc_info=True)
-
-async def is_subscribed(client, user_id):
-    """Check if user is subscribed to the channel."""
-    try:
-        for channel in AUTH_CHANNEL:
-            member = await client.get_chat_member(channel, user_id)
-            if member.status not in ["member", "administrator", "creator"]:
-                invite_link = (await client.get_chat(channel)).invite_link
-                return False, invite_link
-        return True, None
-    except UserNotParticipant:
-        return False, None
-    except Exception as e:
-        logger.error(f"⚠ Subscription check error: {e}", exc_info=True)
-        return True, None  # Allow user if API fails
 
 if __name__ == "__main__":
     try:
