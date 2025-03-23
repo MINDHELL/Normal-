@@ -96,18 +96,8 @@ async def start(client, message):
         [InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")],
     ])
     await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Video Bot!", reply_markup=keyboard)
-    @bot.on_message(filters.command("about"))
-async def about(client, message):
-    """Sends bot details when the /about command is used."""
-    await message.reply_text(
-        "🤖 **Bot Name:** Random Video Bot\n"
-        "👑 **Owner:** @YourUsername\n"
-        "🔧 **Version:** 2.0 (Optimized)\n"
-        "💾 **Database:** MongoDB\n"
-        "🚀 **Hosted On:** Koyeb",
-        disable_web_page_preview=True
-        )
-    if __name__ == "__main__":
-        threading.Thread(target=start_health_check, daemon=True).start()
-        asyncio.create_task(prefetch_videos())
-        bot.run()
+
+if __name__ == "__main__":
+    threading.Thread(target=start_health_check, daemon=True).start()
+    asyncio.create_task(prefetch_videos())  # Start background prefetching
+    bot.run()
