@@ -7,7 +7,7 @@ import re
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
-from pyrogram.errors import UserNotParticipant, FloodWait
+from pyrogram.errors import UserNotParticipant, FloodWait, QueryIdInvalid
 from health_check import start_health_check
 
 # 🔰 Logging Setup
@@ -17,14 +17,14 @@ logger = logging.getLogger(__name__)
 # 🔰 Environment Variables
 API_ID = int(os.getenv("API_ID", "27788368"))
 API_HASH = os.getenv("API_HASH", "9df7e9ef3d7e4145270045e5e43e1081")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
-MONGO_URL = os.getenv("MONGO_URL", "YOUR_MONGO_URL")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7692429836:AAHyUFP6os1A3Hirisl5TV1O5kArGAlAEuQ")
+MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://aarshhub:6L1PAPikOnAIHIRA@cluster0.6shiu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002465297334"))
 OWNER_ID = int(os.getenv("OWNER_ID", "6860316927"))
 WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
 AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "20"))
 
-# ✅ FSub Setup (🔹 Don't Remove Credit: @VJ_Botz 🔹)
+# ✅ Force Subscribe Setup
 id_pattern = re.compile(r'^.\d+$')
 AUTH_CHANNEL = [int(ch) if id_pattern.search(ch) else ch for ch in os.getenv("AUTH_CHANNEL", "-1002490575006").split()]
 
@@ -34,10 +34,7 @@ mongo = MongoClient(MONGO_URL)
 db = mongo["VideoBot"]
 collection = db["videos"]
 
-# 🔥 **Cache for Fast Video Retrieval**
-recent_videos = []
-
-# ✅ **Force Subscribe Function**
+# ✅ **Force Subscribe Check**
 async def is_subscribed(bot, query, channel):
     btn = []
     for id in channel:
@@ -46,35 +43,27 @@ async def is_subscribed(bot, query, channel):
             await bot.get_chat_member(id, query.from_user.id)
         except UserNotParticipant:
             btn.append([InlineKeyboardButton(f'Join {chat.title}', url=chat.invite_link)])
-        except Exception as e:
+        except Exception:
             pass
     return btn
 
 # 🔰 **Fetch & Send Random Video**
 async def send_random_video(client, chat_id):
-    global recent_videos
-
-    if not recent_videos:
-        recent_videos = list(collection.aggregate([{"$sample": {"size": 10}}]))
-
-    if not recent_videos:
+    video = await collection.aggregate([{"$sample": {"size": 1}}]).to_list(1)
+    
+    if not video:
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
         return
     
-    random_video = recent_videos.pop()
+    video = video[0]
     try:
-        message = await client.get_messages(CHANNEL_ID, random_video["message_id"])
+        message = await client.get_messages(CHANNEL_ID, video["message_id"])
         if message and message.video:
-            sent_msg = await client.send_video(
-                chat_id=chat_id,
-                video=message.video.file_id,
-                caption="Thanks 😊"
-            )
-            await asyncio.sleep(AUTO_DELETE_TIME)
-            await sent_msg.delete()
-
-        if len(recent_videos) < 3:
-            asyncio.create_task(prefetch_videos())
+            sent_msg = await client.send_video(chat_id, video=message.video.file_id, caption="Thanks 😊")
+            
+            if AUTO_DELETE_TIME > 0:
+                await asyncio.sleep(AUTO_DELETE_TIME)
+                await sent_msg.delete()
 
     except FloodWait as e:
         logger.warning(f"FloodWait detected: Sleeping for {e.value} seconds")
@@ -84,31 +73,20 @@ async def send_random_video(client, chat_id):
         logger.error(f"Error sending video: {e}")
         await client.send_message(chat_id, "⚠ Error fetching video. Try again later.")
 
-# 🔥 **Pre-fetch Next Set of Videos**
-async def prefetch_videos():
-    global recent_videos
-    if len(recent_videos) < 5:
-        recent_videos.extend(list(collection.aggregate([{"$sample": {"size": 10}}])))
-
 # 🔰 **Index Videos (Owner Only)**
 @bot.on_message(filters.command("index") & filters.user(OWNER_ID))
 async def index_videos(client, message):
     await message.reply_text("🔄 Indexing videos... Please wait.")
-    
-    indexed_count = 0
+
     last_indexed = collection.find_one(sort=[("message_id", -1)])
     last_message_id = last_indexed["message_id"] if last_indexed else 1
     batch_size = 100
+    indexed_count = 0
 
     while True:
         try:
-            message_ids = list(range(last_message_id, last_message_id + batch_size))
-            messages = await client.get_messages(CHANNEL_ID, message_ids)
-
-            video_entries = [
-                {"message_id": msg.id}
-                for msg in messages if msg and msg.video and not collection.find_one({"message_id": msg.id})
-            ]
+            messages = await client.get_messages(CHANNEL_ID, list(range(last_message_id, last_message_id + batch_size)))
+            video_entries = [{"message_id": msg.id} for msg in messages if msg and msg.video and not collection.find_one({"message_id": msg.id})]
 
             if video_entries:
                 collection.insert_many(video_entries)
@@ -121,10 +99,8 @@ async def index_videos(client, message):
             logger.error(f"Indexing error: {e}")
             break
 
-    if indexed_count:
-        await message.reply_text(f"✅ Indexed {indexed_count} new videos!")
-    else:
-        await message.reply_text("⚠ No new videos found!")
+    response = f"✅ Indexed {indexed_count} new videos!" if indexed_count else "⚠ No new videos found!"
+    await message.reply_text(response)
 
 # 🔰 **Check Total Indexed Files (Owner Only)**
 @bot.on_message(filters.command("files") & filters.user(OWNER_ID))
@@ -142,14 +118,11 @@ async def start(client, message):
             btn = await is_subscribed(client, message, AUTH_CHANNEL)
             if btn:
                 username = (await client.get_me()).username
-                if message.command[1]:
-                    btn.append([InlineKeyboardButton("♻️ Try Again ♻️", url=f"https://t.me/{username}?start={message.command[1]}")])
-                else:
-                    btn.append([InlineKeyboardButton("♻️ Try Again ♻️", url=f"https://t.me/{username}?start=true")])
-                await message.reply_text(text=f"<b>👋 Hello {message.from_user.mention},\n\nPlease join the channel then click on try again button. 😇</b>", reply_markup=InlineKeyboardMarkup(btn))
+                btn.append([InlineKeyboardButton("♻️ Try Again ♻️", url=f"https://t.me/{username}?start=true")])
+                await message.reply_text(f"<b>👋 Hello {message.from_user.mention},\n\nPlease join the channel then click the try again button. 😇</b>", reply_markup=InlineKeyboardMarkup(btn))
                 return
         except Exception as e:
-            print(e)
+            logger.error(e)
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")],
@@ -160,13 +133,13 @@ async def start(client, message):
 @bot.on_callback_query(filters.regex("get_random_video"))
 async def random_video_callback(client, callback_query: CallbackQuery):
     try:
-        await callback_query.answer()  # Answer callback first to avoid timeout
+        await callback_query.answer()  # Answer callback first
         await send_random_video(client, callback_query.message.chat.id)
-    except pyrogram.errors.exceptions.bad_request_400.QueryIdInvalid:
-        print("Ignoring invalid query ID error.")
+    except QueryIdInvalid:
+        logger.warning("Ignoring invalid query ID error.")
     except Exception as e:
-        print(f"Error in callback: {e}")
-        
+        logger.error(f"Error in callback: {e}")
+
 # 🔰 **About Command**
 @bot.on_message(filters.command("about"))
 async def about(client, message):
