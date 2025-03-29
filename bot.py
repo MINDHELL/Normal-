@@ -159,9 +159,14 @@ async def start(client, message):
 # 🔰 **Callback for Getting Random Video**
 @bot.on_callback_query(filters.regex("get_random_video"))
 async def random_video_callback(client, callback_query: CallbackQuery):
-    await send_random_video(client, callback_query.message.chat.id)
-    await callback_query.answer()
-
+    try:
+        await callback_query.answer()  # Answer callback first to avoid timeout
+        await send_random_video(client, callback_query.message.chat.id)
+    except pyrogram.errors.exceptions.bad_request_400.QueryIdInvalid:
+        print("Ignoring invalid query ID error.")
+    except Exception as e:
+        print(f"Error in callback: {e}")
+        
 # 🔰 **About Command**
 @bot.on_message(filters.command("about"))
 async def about(client, message):
