@@ -17,8 +17,8 @@ logger = logging.getLogger(__name__)
 # 🔰 Environment Variables
 API_ID = int(os.getenv("API_ID", "27788368"))
 API_HASH = os.getenv("API_HASH", "9df7e9ef3d7e4145270045e5e43e1081")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7692429836:AAHyUFP6os1A3Hirisl5TV1O5kArGAlAEuQ")
-MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://aarshhub:6L1PAPikOnAIHIRA@cluster0.6shiu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
+MONGO_URL = os.getenv("MONGO_URL", "YOUR_MONGO_URL")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002465297334"))
 OWNER_ID = int(os.getenv("OWNER_ID", "6860316927"))
 WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
@@ -47,36 +47,38 @@ async def is_subscribed(bot, query, channel):
             pass
     return btn
 
-# ✅ Rate Limiting Setup
+# ✅ Rate Limiting & Concurrency Control
 user_last_request = {}  # Track last request time per user
-video_request_semaphore = asyncio.Semaphore(2)  # Allow 2 simultaneous video requests
+video_request_semaphore = asyncio.Semaphore(2)  # Limit to 2 video requests at a time
 
-# 🔰 **Fetch & Send Random Video**
+# 🔰 **Fetch & Send Random Video (Optimized)**
 async def send_random_video(client, chat_id):
-    async with video_request_semaphore:  # Global rate limit (max 2 requests at a time)
-        video_list = list(collection.aggregate([{"$sample": {"size": 1}}]))
-
-        if not video_list:
-            await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
-            return
-
-        video = video_list[0]
+    async with video_request_semaphore:  
         try:
+            video = collection.find_one({}, {"message_id": 1})  # Optimized MongoDB query
+            if not video:
+                await client.send_message(chat_id, "⚠ No videos found! Use /index.")
+                return
+
             message = await client.get_messages(CHANNEL_ID, video["message_id"])
             if message and message.video:
-                sent_msg = await client.send_video(chat_id, video=message.video.file_id, caption="Thanks 😊")
+                sent_msg = await client.send_video(chat_id, message.video.file_id, caption="Thanks 😊")
 
+                # Auto-delete after set time
                 if AUTO_DELETE_TIME > 0:
-                    await asyncio.sleep(AUTO_DELETE_TIME)
-                    await sent_msg.delete()
+                    asyncio.create_task(auto_delete_message(client, sent_msg, AUTO_DELETE_TIME))
 
         except FloodWait as e:
-            logger.warning(f"FloodWait detected: Sleeping for {e.value} seconds")
+            logger.warning(f"FloodWait detected: Retrying in {e.value} seconds")
             await asyncio.sleep(e.value)
             await send_random_video(client, chat_id)
         except Exception as e:
             logger.error(f"Error sending video: {e}")
-            await client.send_message(chat_id, "⚠ Error fetching video. Try again later.")
+
+# ✅ **Background Auto-Delete Function**
+async def auto_delete_message(client, message, delay):
+    await asyncio.sleep(delay)
+    await message.delete()
 
 # 🔰 **Callback for Getting Random Video (Rate Limited)**
 @bot.on_callback_query(filters.regex("get_random_video"))
