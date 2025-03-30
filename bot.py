@@ -34,9 +34,16 @@ mongo = MongoClient(MONGO_URL)
 db = mongo["VideoBot"]
 collection = db["videos"]
 
-# ✅ Rate Limiting Setup
-user_last_request = {}  
-video_request_semaphore = asyncio.Semaphore(900)  # Allow 2 concurrent requests
+# ✅ **MongoDB Caching**
+video_cache = []  # Cache for indexed videos
+last_cache_time = 0
+CACHE_EXPIRY = 300  # Refresh cache every 5 minutes
+
+async def refresh_video_cache():
+    global video_cache, last_cache_time
+    if time.time() - last_cache_time > CACHE_EXPIRY:
+        video_cache = list(collection.aggregate([{"$sample": {"size": 100}}]))
+        last_cache_time = time.time()
 
 # ✅ **Force Subscribe Check**
 async def is_subscribed(bot, query, channel):
@@ -51,47 +58,35 @@ async def is_subscribed(bot, query, channel):
             pass
     return btn
 
-# ✅ **Fetch & Send Random Video (Optimized)**
+# 🔰 **Fetch & Send Random Video**
 async def send_random_video(client, chat_id):
-    async with video_request_semaphore:  
-        video_list = list(collection.aggregate([{"$sample": {"size": 10}}]))
+    await refresh_video_cache()  # Refresh cache if needed
 
-        if not video_list:
-            await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
-            return
-
-        video = video_list[0]
-        try:
-            message = await client.get_messages(CHANNEL_ID, video["message_id"])
-            if message and message.video:
-                sent_msg = await client.send_video(chat_id, video=message.video.file_id, caption="Thanks 😊")
-
-                if AUTO_DELETE_TIME > 0:
-                    await asyncio.sleep(AUTO_DELETE_TIME)
-                    await sent_msg.delete()
-
-        except FloodWait as e:
-            logger.warning(f"FloodWait detected: Sleeping for {e.value} seconds")
-            await asyncio.sleep(e.value)
-            await send_random_video(client, chat_id)
-        except Exception as e:
-            logger.error(f"Error sending video: {e}")
-            await client.send_message(chat_id, "⚠ Error fetching video. Try again later.")
-
-# ✅ **Callback for Getting Random Video (Rate Limited)**
-@bot.on_callback_query(filters.regex("get_random_video"))
-async def random_video_callback(client, callback_query: CallbackQuery):
-    user_id = callback_query.from_user.id
-    current_time = time.time()
-
-    # User cooldown (1 second per request)
-    if user_id in user_last_request and current_time - user_last_request[user_id] < 1:
-        await callback_query.answer("❌ Please wait before requesting another video!", show_alert=True)
+    if not video_cache:
+        await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
         return
 
-    # Update last request time
-    user_last_request[user_id] = current_time
+    video = video_cache.pop()
+    try:
+        message = await client.get_messages(CHANNEL_ID, video["message_id"])
+        if message and message.video:
+            sent_msg = await client.send_video(chat_id, video=message.video.file_id, caption="Thanks 😊")
 
+            if AUTO_DELETE_TIME > 0:
+                await asyncio.sleep(AUTO_DELETE_TIME)
+                await sent_msg.delete()
+
+    except FloodWait as e:
+        logger.warning(f"FloodWait detected: Sleeping for {e.value} seconds")
+        await asyncio.sleep(e.value)
+        await send_random_video(client, chat_id)
+    except Exception as e:
+        logger.error(f"Error sending video: {e}")
+        await client.send_message(chat_id, "⚠ Error fetching video. Try again later.")
+
+# 🔰 **Callback for Getting Random Video**
+@bot.on_callback_query(filters.regex("get_random_video"))
+async def random_video_callback(client, callback_query: CallbackQuery):
     try:
         await callback_query.answer()
         await send_random_video(client, callback_query.message.chat.id)
@@ -100,7 +95,7 @@ async def random_video_callback(client, callback_query: CallbackQuery):
     except Exception as e:
         logger.error(f"Error in callback: {e}")
 
-# ✅ **Start Command (Welcome & FSub Check)**
+# 🔰 **Start Command (Welcome & FSub Check)**
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     user_id = message.from_user.id
@@ -121,54 +116,59 @@ async def start(client, message):
     ])
     await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Video Bot!", reply_markup=keyboard)
 
-# ✅ **Index Videos (Optimized)**
+# 🔰 **Index Videos (Owner Only)**
 @bot.on_message(filters.command("index") & filters.user(OWNER_ID))
 async def index_videos(client, message):
     await message.reply_text("🔄 Indexing videos... Please wait.")
 
     last_indexed = collection.find_one(sort=[("message_id", -1)])
     last_message_id = last_indexed["message_id"] if last_indexed else 1
+    batch_size = 100
     indexed_count = 0
 
     while True:
         try:
-            messages = await client.get_messages(CHANNEL_ID, list(range(last_message_id, last_message_id + 100)))
-            video_entries = [{"message_id": msg.id} for msg in messages if msg and msg.video]
+            messages = await client.get_messages(CHANNEL_ID, list(range(last_message_id, last_message_id + batch_size)))
+            video_entries = [{"message_id": msg.id} for msg in messages if msg and msg.video and not collection.find_one({"message_id": msg.id})]
 
             if video_entries:
-                collection.insert_many(video_entries, ordered=False)
+                collection.insert_many(video_entries)
                 indexed_count += len(video_entries)
 
-            last_message_id += 100
+            last_message_id += batch_size
             if not video_entries:
                 break
         except Exception as e:
             logger.error(f"Indexing error: {e}")
             break
 
+    await refresh_video_cache()
     response = f"✅ Indexed {indexed_count} new videos!" if indexed_count else "⚠ No new videos found!"
     await message.reply_text(response)
 
-# ✅ **Check Total Indexed Files (Owner Only)**
+# 🔰 **Check Total Indexed Files (Owner Only)**
 @bot.on_message(filters.command("files") & filters.user(OWNER_ID))
 async def check_files(client, message):
     total_videos = collection.count_documents({})
     await message.reply_text(f"📂 Total Indexed Videos: {total_videos}")
 
-# ✅ **About Command**
+# 🔰 **About Command**
 @bot.on_message(filters.command("about"))
 async def about(client, message):
-    await message.reply_text(
-        "🤖 **Bot Name:** Random Video Bot\n"
-        "👑 **Owner:** @YourUsername\n"
-        "🔧 **Version:** 2.2 (Optimized)\n"
-        "💾 **Database:** MongoDB\n"
-        "🚀 **Hosted On:** Koyeb",
-        disable_web_page_preview=True
-    )
+    about_text = f"""
+🤖 **Bot Name:** Random Video Bot  
+👨‍💻 **Owner:** [Your Username](tg://user?id={OWNER_ID})  
+🛠 **Version:** 2.1  
+📡 **Hosted On:** Koyeb  
+💾 **Database:** MongoDB  
+⚙ **Framework:** Pyrogram  
+📢 **Support Channel:** [Join Here](https://t.me/YOUR_CHANNEL)  
 
-# ✅ **Run the Bot**
+⚡ **Description:** This bot fetches random videos from an indexed database and sends them to users on request.  
+"""
+    await message.reply_text(about_text, disable_web_page_preview=True)
+
+# 🔰 **Run the Bot**
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
-    bot.run() 
-
+    bot.run()
