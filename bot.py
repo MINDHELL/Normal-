@@ -33,14 +33,37 @@ bot = Client("video_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 mongo = MongoClient(MONGO_URL)
 db = mongo["VideoBot"]
 collection = db["videos"]
+settings_collection = db["settings"]
 
 # ✅ **MongoDB Caching**
 video_cache = []  # Cache for indexed videos
+last_cache_time = 0
 CACHE_EXPIRY = 300  # Refresh cache every 5 minutes
 
 async def refresh_video_cache():
-    global video_cache
-    video_cache = list(collection.aggregate([{"$sample": {"size": 500}}]))  # Load more videos into cache
+    global video_cache, last_cache_time
+    if time.time() - last_cache_time > CACHE_EXPIRY:
+        video_cache = list(collection.aggregate([{"$sample": {"size": 500}}]))  # Increased cache size
+        last_cache_time = time.time()
+
+# ✅ **Fetch Protection Setting**
+def is_protection_enabled():
+    setting = settings_collection.find_one({"_id": "content_protection"})
+    return setting and setting.get("enabled", False)
+
+# ✅ **Set Protection On/Off**
+@bot.on_message(filters.command("protect") & filters.user(OWNER_ID))
+async def toggle_protection(client, message):
+    if len(message.command) < 2:
+        await message.reply_text("⚙ Usage: `/protect on` or `/protect off`")
+        return
+    
+    status = message.command[1].lower()
+    if status in ["on", "off"]:
+        settings_collection.update_one({"_id": "content_protection"}, {"$set": {"enabled": status == "on"}}, upsert=True)
+        await message.reply_text(f"✅ **Content Protection is now {'ENABLED' if status == 'on' else 'DISABLED'}**")
+    else:
+        await message.reply_text("⚙ Invalid option! Use `/protect on` or `/protect off`.")
 
 # ✅ **Force Subscribe Check**
 async def is_subscribed(bot, query, channel):
@@ -55,7 +78,7 @@ async def is_subscribed(bot, query, channel):
             pass
     return btn
 
-# 🔰 **Fetch & Send Random Video FAST**
+# 🔰 **Fetch & Send Random Video (With Protection)**
 async def send_random_video(client, chat_id):
     await refresh_video_cache()  # Refresh cache if needed
 
@@ -67,10 +90,16 @@ async def send_random_video(client, chat_id):
     try:
         message = await client.get_messages(CHANNEL_ID, video["message_id"])
         if message and message.video:
-            sent_msg = await client.send_video(chat_id, video=message.video.file_id, caption="Thanks 😊")
+            sent_msg = await client.send_video(
+                chat_id, 
+                video=message.video.file_id, 
+                caption="Thanks 😊", 
+                protect_content=is_protection_enabled()  # Enable protection if set
+            )
 
             if AUTO_DELETE_TIME > 0:
-                asyncio.create_task(delete_after(sent_msg, AUTO_DELETE_TIME))  # Non-blocking delete
+                await asyncio.sleep(AUTO_DELETE_TIME)
+                await sent_msg.delete()
 
     except FloodWait as e:
         logger.warning(f"FloodWait detected: Sleeping for {e.value} seconds")
@@ -80,16 +109,12 @@ async def send_random_video(client, chat_id):
         logger.error(f"Error sending video: {e}")
         await client.send_message(chat_id, "⚠ Error fetching video. Try again later.")
 
-async def delete_after(message, delay):
-    await asyncio.sleep(delay)
-    await message.delete()
-
-# 🔰 **Callback for Getting Random Video (NO LIMIT)**
+# 🔰 **Callback for Getting Random Video**
 @bot.on_callback_query(filters.regex("get_random_video"))
 async def random_video_callback(client, callback_query: CallbackQuery):
     try:
         await callback_query.answer()
-        asyncio.create_task(send_random_video(client, callback_query.message.chat.id))  # Instant processing
+        asyncio.create_task(send_random_video(client, callback_query.message.chat.id))
     except QueryIdInvalid:
         logger.warning("Ignoring invalid query ID error.")
     except Exception as e:
@@ -151,7 +176,7 @@ async def index_videos(client, message):
 async def check_files(client, message):
     total_videos = collection.count_documents({})
     await message.reply_text(f"📂 Total Indexed Videos: {total_videos}")
-
+    
 # 🔰 **About Command**
 @bot.on_message(filters.command("about"))
 async def about(client, message):
@@ -167,8 +192,9 @@ async def about(client, message):
 ⚡ **Description:** This bot fetches random videos from an indexed database and sends them to users on request.  
 """
     await message.reply_text(about_text, disable_web_page_preview=True)
-
-# 🔰 **Run the Bot**
-if __name__ == "__main__":
-    threading.Thread(target=start_health_check, daemon=True).start()
-    bot.run()
+    
+    # 🔰 **Run the Bot**
+    if __name__ == "__main__":
+        
+        threading.Thread(target=start_health_check, daemon=True).start()
+        bot.run()
