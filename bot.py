@@ -36,14 +36,11 @@ collection = db["videos"]
 
 # ✅ **MongoDB Caching**
 video_cache = []  # Cache for indexed videos
-last_cache_time = 0
 CACHE_EXPIRY = 300  # Refresh cache every 5 minutes
 
 async def refresh_video_cache():
-    global video_cache, last_cache_time
-    if time.time() - last_cache_time > CACHE_EXPIRY:
-        video_cache = list(collection.aggregate([{"$sample": {"size": 100}}]))
-        last_cache_time = time.time()
+    global video_cache
+    video_cache = list(collection.aggregate([{"$sample": {"size": 500}}]))  # Load more videos into cache
 
 # ✅ **Force Subscribe Check**
 async def is_subscribed(bot, query, channel):
@@ -58,7 +55,7 @@ async def is_subscribed(bot, query, channel):
             pass
     return btn
 
-# 🔰 **Fetch & Send Random Video**
+# 🔰 **Fetch & Send Random Video FAST**
 async def send_random_video(client, chat_id):
     await refresh_video_cache()  # Refresh cache if needed
 
@@ -73,8 +70,7 @@ async def send_random_video(client, chat_id):
             sent_msg = await client.send_video(chat_id, video=message.video.file_id, caption="Thanks 😊")
 
             if AUTO_DELETE_TIME > 0:
-                await asyncio.sleep(AUTO_DELETE_TIME)
-                await sent_msg.delete()
+                asyncio.create_task(delete_after(sent_msg, AUTO_DELETE_TIME))  # Non-blocking delete
 
     except FloodWait as e:
         logger.warning(f"FloodWait detected: Sleeping for {e.value} seconds")
@@ -84,12 +80,16 @@ async def send_random_video(client, chat_id):
         logger.error(f"Error sending video: {e}")
         await client.send_message(chat_id, "⚠ Error fetching video. Try again later.")
 
-# 🔰 **Callback for Getting Random Video**
+async def delete_after(message, delay):
+    await asyncio.sleep(delay)
+    await message.delete()
+
+# 🔰 **Callback for Getting Random Video (NO LIMIT)**
 @bot.on_callback_query(filters.regex("get_random_video"))
 async def random_video_callback(client, callback_query: CallbackQuery):
     try:
         await callback_query.answer()
-        await send_random_video(client, callback_query.message.chat.id)
+        asyncio.create_task(send_random_video(client, callback_query.message.chat.id))  # Instant processing
     except QueryIdInvalid:
         logger.warning("Ignoring invalid query ID error.")
     except Exception as e:
