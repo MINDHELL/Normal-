@@ -48,7 +48,7 @@ async def is_subscribed(bot, query, channel):
 
 # 🔰 **Fetch & Send Random Video**
 async def send_random_video(client, chat_id):
-    video_list = await collection.aggregate([{"$sample": {"size": 1}}]).to_list(length=1)
+    video_list = list(collection.aggregate([{"$sample": {"size": 1}}]))
     
     if not video_list:
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
