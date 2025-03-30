@@ -2,6 +2,7 @@ import os
 import logging
 import asyncio
 import threading
+import time
 import re
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
@@ -46,31 +47,79 @@ async def is_subscribed(bot, query, channel):
             pass
     return btn
 
+# ✅ Rate Limiting Setup
+user_last_request = {}  # Track last request time per user
+video_request_semaphore = asyncio.Semaphore(2)  # Allow 2 simultaneous video requests
+
 # 🔰 **Fetch & Send Random Video**
 async def send_random_video(client, chat_id):
-    video_list = list(collection.aggregate([{"$sample": {"size": 1}}]))
-    
-    if not video_list:
-        await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
-        return
-    
-    video = video_list[0]  # Extract the first item from the list
-    try:
-        message = await client.get_messages(CHANNEL_ID, video["message_id"])
-        if message and message.video:
-            sent_msg = await client.send_video(chat_id, video=message.video.file_id, caption="Thanks 😊")
-            
-            if AUTO_DELETE_TIME > 0:
-                await asyncio.sleep(AUTO_DELETE_TIME)
-                await sent_msg.delete()
+    async with video_request_semaphore:  # Global rate limit (max 2 requests at a time)
+        video_list = list(collection.aggregate([{"$sample": {"size": 1}}]))
 
-    except FloodWait as e:
-        logger.warning(f"FloodWait detected: Sleeping for {e.value} seconds")
-        await asyncio.sleep(e.value)
-        await send_random_video(client, chat_id)
+        if not video_list:
+            await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
+            return
+
+        video = video_list[0]
+        try:
+            message = await client.get_messages(CHANNEL_ID, video["message_id"])
+            if message and message.video:
+                sent_msg = await client.send_video(chat_id, video=message.video.file_id, caption="Thanks 😊")
+
+                if AUTO_DELETE_TIME > 0:
+                    await asyncio.sleep(AUTO_DELETE_TIME)
+                    await sent_msg.delete()
+
+        except FloodWait as e:
+            logger.warning(f"FloodWait detected: Sleeping for {e.value} seconds")
+            await asyncio.sleep(e.value)
+            await send_random_video(client, chat_id)
+        except Exception as e:
+            logger.error(f"Error sending video: {e}")
+            await client.send_message(chat_id, "⚠ Error fetching video. Try again later.")
+
+# 🔰 **Callback for Getting Random Video (Rate Limited)**
+@bot.on_callback_query(filters.regex("get_random_video"))
+async def random_video_callback(client, callback_query: CallbackQuery):
+    user_id = callback_query.from_user.id
+    current_time = time.time()
+
+    # User-based cooldown (2-second limit per user)
+    if user_id in user_last_request and current_time - user_last_request[user_id] < 2:
+        await callback_query.answer("❌ Please wait before requesting another video!", show_alert=True)
+        return
+
+    # Update last request time
+    user_last_request[user_id] = current_time
+
+    try:
+        await callback_query.answer()
+        await send_random_video(client, callback_query.message.chat.id)
+    except QueryIdInvalid:
+        logger.warning("Ignoring invalid query ID error.")
     except Exception as e:
-        logger.error(f"Error sending video: {e}")
-        await client.send_message(chat_id, "⚠ Error fetching video. Try again later.")
+        logger.error(f"Error in callback: {e}")
+
+# 🔰 **Start Command (Welcome & FSub Check)**
+@bot.on_message(filters.command("start"))
+async def start(client, message):
+    user_id = message.from_user.id
+
+    if AUTH_CHANNEL:
+        try:
+            btn = await is_subscribed(client, message, AUTH_CHANNEL)
+            if btn:
+                username = (await client.get_me()).username
+                btn.append([InlineKeyboardButton("♻️ Try Again ♻️", url=f"https://t.me/{username}?start=true")])
+                await message.reply_text(f"<b>👋 Hello {message.from_user.mention},\n\nPlease join the channel then click the try again button. 😇</b>", reply_markup=InlineKeyboardMarkup(btn))
+                return
+        except Exception as e:
+            logger.error(e)
+
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")],
+    ])
+    await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Video Bot!", reply_markup=keyboard)
 
 # 🔰 **Index Videos (Owner Only)**
 @bot.on_message(filters.command("index") & filters.user(OWNER_ID))
@@ -106,38 +155,6 @@ async def index_videos(client, message):
 async def check_files(client, message):
     total_videos = collection.count_documents({})
     await message.reply_text(f"📂 Total Indexed Videos: {total_videos}")
-
-# 🔰 **Start Command (Welcome & FSub Check)**
-@bot.on_message(filters.command("start"))
-async def start(client, message):
-    user_id = message.from_user.id
-
-    if AUTH_CHANNEL:
-        try:
-            btn = await is_subscribed(client, message, AUTH_CHANNEL)
-            if btn:
-                username = (await client.get_me()).username
-                btn.append([InlineKeyboardButton("♻️ Try Again ♻️", url=f"https://t.me/{username}?start=true")])
-                await message.reply_text(f"<b>👋 Hello {message.from_user.mention},\n\nPlease join the channel then click the try again button. 😇</b>", reply_markup=InlineKeyboardMarkup(btn))
-                return
-        except Exception as e:
-            logger.error(e)
-
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")],
-    ])
-    await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Video Bot!", reply_markup=keyboard)
-
-# 🔰 **Callback for Getting Random Video**
-@bot.on_callback_query(filters.regex("get_random_video"))
-async def random_video_callback(client, callback_query: CallbackQuery):
-    try:
-        await callback_query.answer()  # Answer callback first
-        await send_random_video(client, callback_query.message.chat.id)
-    except QueryIdInvalid:
-        logger.warning("Ignoring invalid query ID error.")
-    except Exception as e:
-        logger.error(f"Error in callback: {e}")
 
 # 🔰 **About Command**
 @bot.on_message(filters.command("about"))
