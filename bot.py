@@ -176,25 +176,8 @@ async def index_videos(client, message):
 async def check_files(client, message):
     total_videos = collection.count_documents({})
     await message.reply_text(f"📂 Total Indexed Videos: {total_videos}")
-    
-# 🔰 **About Command**
-@bot.on_message(filters.command("about"))
-async def about(client, message):
-    about_text = f"""
-🤖 **Bot Name:** Random Video Bot  
-👨‍💻 **Owner:** [Your Username](tg://user?id={OWNER_ID})  
-🛠 **Version:** 2.1  
-📡 **Hosted On:** Koyeb  
-💾 **Database:** MongoDB  
-⚙ **Framework:** Pyrogram  
-📢 **Support Channel:** [Join Here](https://t.me/YOUR_CHANNEL)  
 
-⚡ **Description:** This bot fetches random videos from an indexed database and sends them to users on request.  
-"""
-    await message.reply_text(about_text, disable_web_page_preview=True)
-    
-    # 🔰 **Run the Bot**
-    if __name__ == "__main__":
-        
-        threading.Thread(target=start_health_check, daemon=True).start()
-        bot.run()
+# 🔰 **Run the Bot**
+if __name__ == "__main__":
+    threading.Thread(target=start_health_check, daemon=True).start()
+    bot.run()
