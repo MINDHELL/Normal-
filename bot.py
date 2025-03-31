@@ -89,7 +89,10 @@ async def broadcast(client, message):
     start_time = time.time()
 
     for user in users:
-        user_id = user["id"]
+        user_id = user. get("id")
+        if not user_id:
+            continue
+            
         result, reason = await broadcast_messages(user_id, b_msg)
         if result:
             success += 1
