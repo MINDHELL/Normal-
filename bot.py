@@ -4,6 +4,7 @@ import asyncio
 import threading
 import time
 import re
+import requests
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
@@ -28,42 +29,58 @@ AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "20"))
 id_pattern = re.compile(r'^.\d+$')
 AUTH_CHANNEL = [int(ch) if id_pattern.search(ch) else ch for ch in os.getenv("AUTH_CHANNEL", "-1002490575006").split()]
 
-# 🔰 Initialize Bot & Database
+# ✅ Token & Shortener API
+SHORTENER_API_URL = os.getenv("SHORTENER_API_URL", "https://instantearn.in")
+SHORTENER_API_KEY = os.getenv("SHORTENER_API_KEY", "e753b45153becd850d3142dbdfce442891a7b1d0")
+
+# ✅ Initialize Bot & Database
 bot = Client("video_bot", api_id=API_ID, api_hash=API_HASH, bot_token=BOT_TOKEN)
 mongo = MongoClient(MONGO_URL)
 db = mongo["VideoBot"]
 collection = db["videos"]
+users_collection = db["users"]
 settings_collection = db["settings"]
 
+# ✅ Free Video Limit
+FREE_VIDEO_LIMIT = 5
+
 # ✅ **MongoDB Caching**
-video_cache = []  # Cache for indexed videos
+video_cache = []
 last_cache_time = 0
 CACHE_EXPIRY = 300  # Refresh cache every 5 minutes
 
 async def refresh_video_cache():
     global video_cache, last_cache_time
     if time.time() - last_cache_time > CACHE_EXPIRY:
-        video_cache = list(collection.aggregate([{"$sample": {"size": 500}}]))  # Increased cache size
+        video_cache = list(collection.aggregate([{"$sample": {"size": 500}}]))
         last_cache_time = time.time()
 
-# ✅ **Fetch Protection Setting**
-def is_protection_enabled():
-    setting = settings_collection.find_one({"_id": "content_protection"})
-    return setting and setting.get("enabled", False)
+# ✅ **Check Subscription Type**
+def get_user_subscription(user_id):
+    user = users_collection.find_one({"user_id": user_id})
+    return user["subscription"] if user else "free"
 
-# ✅ **Set Protection On/Off**
-@bot.on_message(filters.command("protect") & filters.user(OWNER_ID))
-async def toggle_protection(client, message):
-    if len(message.command) < 2:
-        await message.reply_text("⚙ Usage: `/protect on` or `/protect off`")
-        return
-    
-    status = message.command[1].lower()
-    if status in ["on", "off"]:
-        settings_collection.update_one({"_id": "content_protection"}, {"$set": {"enabled": status == "on"}}, upsert=True)
-        await message.reply_text(f"✅ **Content Protection is now {'ENABLED' if status == 'on' else 'DISABLED'}**")
-    else:
-        await message.reply_text("⚙ Invalid option! Use `/protect on` or `/protect off`.")
+def reduce_free_videos(user_id):
+    user = users_collection.find_one({"user_id": user_id})
+    if user and "free_videos" in user and user["free_videos"] > 0:
+        users_collection.update_one({"user_id": user_id}, {"$inc": {"free_videos": -1}})
+        return user["free_videos"] - 1
+    return 0
+
+def set_free_videos(user_id):
+    users_collection.update_one({"user_id": user_id}, {"$setOnInsert": {"free_videos": FREE_VIDEO_LIMIT}}, upsert=True)
+
+# ✅ **Shortener API Verification**
+def verify_token(user_id):
+    user = users_collection.find_one({"user_id": user_id})
+    if user and "verified" in user and user["verified"]:
+        return True
+
+    response = requests.get(f"{SHORTENER_API_URL}/verify?api_key={SHORTENER_API_KEY}&user_id={user_id}")
+    if response.status_code == 200 and response.json().get("status") == "success":
+        users_collection.update_one({"user_id": user_id}, {"$set": {"verified": True}}, upsert=True)
+        return True
+    return False
 
 # ✅ **Force Subscribe Check**
 async def is_subscribed(bot, query, channel):
@@ -78,12 +95,23 @@ async def is_subscribed(bot, query, channel):
             pass
     return btn
 
-# 🔰 **Fetch & Send Random Video (With Protection)**
-async def send_random_video(client, chat_id):
-    await refresh_video_cache()  # Refresh cache if needed
+# 🔰 **Fetch & Send Random Video**
+async def send_random_video(client, chat_id, user_id):
+    await refresh_video_cache()
 
     if not video_cache:
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
+        return
+
+    user_sub = get_user_subscription(user_id)
+    
+    if user_sub == "free":
+        remaining_videos = reduce_free_videos(user_id)
+        if remaining_videos < 0:
+            await client.send_message(chat_id, "🚫 You've used all your free videos! Verify via shortener to continue.")
+            return
+    elif user_sub == "verified" and not verify_token(user_id):
+        await client.send_message(chat_id, "⚠ Your verification expired! Please verify again via the shortener.")
         return
 
     video = video_cache.pop()
@@ -93,8 +121,7 @@ async def send_random_video(client, chat_id):
             sent_msg = await client.send_video(
                 chat_id, 
                 video=message.video.file_id, 
-                caption="Thanks 😊", 
-                protect_content=is_protection_enabled()  # Enable protection if set
+                caption="Thanks 😊"
             )
 
             if AUTO_DELETE_TIME > 0:
@@ -102,28 +129,28 @@ async def send_random_video(client, chat_id):
                 await sent_msg.delete()
 
     except FloodWait as e:
-        logger.warning(f"FloodWait detected: Sleeping for {e.value} seconds")
         await asyncio.sleep(e.value)
-        await send_random_video(client, chat_id)
+        await send_random_video(client, chat_id, user_id)
     except Exception as e:
         logger.error(f"Error sending video: {e}")
         await client.send_message(chat_id, "⚠ Error fetching video. Try again later.")
 
-# 🔰 **Callback for Getting Random Video**
+# ✅ **Callback for Getting Random Video**
 @bot.on_callback_query(filters.regex("get_random_video"))
 async def random_video_callback(client, callback_query: CallbackQuery):
     try:
         await callback_query.answer()
-        asyncio.create_task(send_random_video(client, callback_query.message.chat.id))
+        asyncio.create_task(send_random_video(client, callback_query.message.chat.id, callback_query.from_user.id))
     except QueryIdInvalid:
         logger.warning("Ignoring invalid query ID error.")
     except Exception as e:
         logger.error(f"Error in callback: {e}")
 
-# 🔰 **Start Command (Welcome & FSub Check)**
+# ✅ **Start Command**
 @bot.on_message(filters.command("start"))
 async def start(client, message):
     user_id = message.from_user.id
+    set_free_videos(user_id)
 
     if AUTH_CHANNEL:
         try:
@@ -131,53 +158,24 @@ async def start(client, message):
             if btn:
                 username = (await client.get_me()).username
                 btn.append([InlineKeyboardButton("♻️ Try Again ♻️", url=f"https://t.me/{username}?start=true")])
-                await message.reply_text(f"<b>👋 Hello {message.from_user.mention},\n\nPlease join the channel then click the try again button. 😇</b>", reply_markup=InlineKeyboardMarkup(btn))
+                await message.reply_text("👋 Hello! Please join the channel then click Try Again.", reply_markup=InlineKeyboardMarkup(btn))
                 return
         except Exception as e:
             logger.error(e)
 
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")],
+        [InlineKeyboardButton("✅ Verify & Get More Videos", callback_data="verify_tutorial")]
     ])
-    await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Video Bot!", reply_markup=keyboard)
+    await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome! Enjoy free videos.", reply_markup=keyboard)
 
-# 🔰 **Index Videos (Owner Only)**
-@bot.on_message(filters.command("index") & filters.user(OWNER_ID))
-async def index_videos(client, message):
-    await message.reply_text("🔄 Indexing videos... Please wait.")
+# ✅ **Verify Tutorial**
+@bot.on_callback_query(filters.regex("verify_tutorial"))
+async def verify_tutorial(client, callback_query: CallbackQuery):
+    short_url = f"{SHORTENER_API_URL}/get?api_key={SHORTENER_API_KEY}&user_id={callback_query.from_user.id}"
+    await callback_query.message.reply_text(f"📌 **Verification Steps:**\n\n1️⃣ Click the link below.\n2️⃣ Complete the verification.\n3️⃣ Enjoy more videos!\n\n🔗 [Verify Now]({short_url})", disable_web_page_preview=True)
 
-    last_indexed = collection.find_one(sort=[("message_id", -1)])
-    last_message_id = last_indexed["message_id"] if last_indexed else 1
-    batch_size = 100
-    indexed_count = 0
-
-    while True:
-        try:
-            messages = await client.get_messages(CHANNEL_ID, list(range(last_message_id, last_message_id + batch_size)))
-            video_entries = [{"message_id": msg.id} for msg in messages if msg and msg.video and not collection.find_one({"message_id": msg.id})]
-
-            if video_entries:
-                collection.insert_many(video_entries)
-                indexed_count += len(video_entries)
-
-            last_message_id += batch_size
-            if not video_entries:
-                break
-        except Exception as e:
-            logger.error(f"Indexing error: {e}")
-            break
-
-    await refresh_video_cache()
-    response = f"✅ Indexed {indexed_count} new videos!" if indexed_count else "⚠ No new videos found!"
-    await message.reply_text(response)
-
-# 🔰 **Check Total Indexed Files (Owner Only)**
-@bot.on_message(filters.command("files") & filters.user(OWNER_ID))
-async def check_files(client, message):
-    total_videos = collection.count_documents({})
-    await message.reply_text(f"📂 Total Indexed Videos: {total_videos}")
-
-# 🔰 **Run the Bot**
+# ✅ **Run the Bot**
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
     bot.run()
