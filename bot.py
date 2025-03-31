@@ -8,7 +8,7 @@ import datetime
 from pyrogram import Client, filters
 from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from pymongo import MongoClient
-from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid, QueryIdInvalid
+from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid
 from health_check import start_health_check
 
 # 🔰 Logging Setup
@@ -18,8 +18,8 @@ logger = logging.getLogger(__name__)
 # 🔰 Environment Variables
 API_ID = int(os.getenv("API_ID", "27788368"))
 API_HASH = os.getenv("API_HASH", "9df7e9ef3d7e4145270045e5e43e1081")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7692429836:AAHyUFP6os1A3Hirisl5TV1O5kArGAlAEuQ")
-MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://aarshhub:6L1PAPikOnAIHIRA@cluster0.6shiu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "YOUR_BOT_TOKEN")
+MONGO_URL = os.getenv("MONGO_URL", "YOUR_MONGO_URL")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002465297334"))
 OWNER_ID = int(os.getenv("OWNER_ID", "6860316927"))
 WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
@@ -38,7 +38,7 @@ users_collection = db["users"]
 settings_collection = db["settings"]
 
 # ✅ **Cache Optimization**
-video_cache = []  
+video_cache = []
 last_cache_time = 0
 CACHE_EXPIRY = 300  # Refresh cache every 5 minutes
 
