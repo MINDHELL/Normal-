@@ -23,7 +23,9 @@ MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://aarshhub:6L1PAPikOnAIHIRA@clus
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002465297334"))
 OWNER_ID = int(os.getenv("OWNER_ID", "6860316927"))
 WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
-AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "60"))
+AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "120"))
+VIDEO_LIMIT = int(os.getenv("VIDEO_LIMIT", "20"))
+QUOTA_RESET_TIME = int(os.getenv("QUOTA_RESET_TIME", "21600"))  # 6 hours in seconds
 
 # ✅ Force Subscribe Setup
 id_pattern = re.compile(r'^.\d+$')
@@ -56,7 +58,7 @@ def is_protection_enabled():
 # ✅ **User Management**
 async def add_user(user_id):
     if not users_collection.find_one({"id": user_id}):
-        users_collection.insert_one({"id": user_id, "joined": datetime.datetime.utcnow(), "last_access": datetime.datetime.utcnow(), "video_count": 0})
+        users_collection.insert_one({"id": user_id, "joined": datetime.datetime.utcnow(), "videos_sent": 0, "quota_reset_time": time.time() + QUOTA_RESET_TIME})
 
 # ✅ **/users Command – Get Total Users**
 @bot.on_message(filters.command("users") & filters.user(OWNER_ID))
@@ -136,28 +138,18 @@ async def start(client, message):
 
 # ✅ **Get Random Video**
 async def send_random_video(client, chat_id):
+    user = users_collection.find_one({"id": chat_id})
+    if user:
+        # Check quota status
+        if user["videos_sent"] >= VIDEO_LIMIT and time.time() < user["quota_reset_time"]:
+            remaining_time = user["quota_reset_time"] - time.time()
+            await client.send_message(chat_id, f"⚠ You have reached your video limit. Please try again in {datetime.timedelta(seconds=int(remaining_time))}.")
+            return
+
     await refresh_video_cache()
 
     if not video_cache:
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
-        return
-
-    user = users_collection.find_one({"id": chat_id})
-    if not user:
-        await client.send_message(chat_id, "⚠ User not found!")
-        return
-
-    last_access = user.get("last_access", datetime.datetime.utcnow())
-    video_count = user.get("video_count", 0)
-
-    # Check if 6 hours have passed and reset the count if it has
-    time_diff = datetime.datetime.utcnow() - last_access
-    if time_diff.total_seconds() > 6 * 60 * 60:
-        video_count = 0
-
-    # Check if the user has reached the limit of 20 videos
-    if video_count >= 20:
-        await client.send_message(chat_id, "⚠ You have reached the limit of 20 videos in the past 6 hours. Please try again later!")
         return
 
     video = video_cache.pop()
@@ -166,15 +158,12 @@ async def send_random_video(client, chat_id):
         if message and message.video:
             sent_msg = await client.send_video(chat_id, video=message.video.file_id, caption="Thanks 😊", protect_content=is_protection_enabled())
 
+            # Increment the user's video count and check for reset
+            users_collection.update_one({"id": chat_id}, {"$inc": {"videos_sent": 1}})
+
             if AUTO_DELETE_TIME > 0:
                 await asyncio.sleep(AUTO_DELETE_TIME)
                 await sent_msg.delete()
-
-            # Update video count and last access time
-            users_collection.update_one(
-                {"id": chat_id},
-                {"$set": {"last_access": datetime.datetime.utcnow(), "video_count": video_count + 1}}
-            )
 
     except FloodWait as e:
         await asyncio.sleep(e.value)
@@ -184,7 +173,7 @@ async def send_random_video(client, chat_id):
 async def random_video_callback(client, callback_query: CallbackQuery):
     await callback_query.answer()
     asyncio.create_task(send_random_video(client, callback_query.message.chat.id))
-    
+
 # ✅ **Index Videos**
 @bot.on_message(filters.command("index") & filters.user(OWNER_ID))
 async def index_videos(client, message):
@@ -211,12 +200,24 @@ async def index_videos(client, message):
 
     await refresh_video_cache()
     await message.reply_text(f"✅ Indexed {indexed_count} new videos!" if indexed_count else "⚠ No new videos found!")
-    
+
 @bot.on_message(filters.command("files") & filters.user(OWNER_ID))
 async def total_files(client, message):
     total_files = collection.count_documents({})
     await message.reply_text(f"📂 **Total Indexed Files:** `{total_files}`")
-    
+
+# ✅ **/quota Command – Get User's Quota Status**
+@bot.on_message(filters.command("quota"))
+async def quota_status(client, message):
+    user = users_collection.find_one({"id": message.from_user.id})
+    if user:
+        videos_left = max(0, VIDEO_LIMIT - user["videos_sent"])
+        if user["videos_sent"] >= VIDEO_LIMIT:
+            reset_time = user["quota_reset_time"] - time.time()
+            await message.reply_text(f"⚠ You have reached your video limit. Try again in {datetime.timedelta(seconds=int(reset_time))}.")
+        else:
+            await message.reply_text(f"📊 **Quota Status:**\nVideos Left: `{videos_left}`\nQuota Reset In: {datetime.timedelta(seconds=int(user['quota_reset_time'] - time.time()))}")
+
 # ✅ **Run the Bot**
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
