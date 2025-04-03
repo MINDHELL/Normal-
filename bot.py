@@ -139,7 +139,7 @@ async def start(client, message):
                 chat = await client.get_chat(int(id))
                 await client.get_chat_member(id, user_id)
         except UserNotParticipant:
-            btn.append([InlineKeyboardButton(f'Join {chat.title}', url=chat.invite_link)])
+            btn.append([InlineKeyboardButton(f'Join {chat.title}', url=chat.invite_link)])
             btn.append([InlineKeyboardButton("♻️ Try Again ♻️", url=f"https://t.me/{client.me.username}?start=true")])
             await message.reply_text(
                 f"👋 **Hello {message.from_user.mention},**\n\nJoin the channel and click 'Try Again'.",
