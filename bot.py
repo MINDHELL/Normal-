@@ -24,8 +24,8 @@ CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002465297334"))
 OWNER_ID = int(os.getenv("OWNER_ID", "6860316927"))
 WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
 AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "120"))
-VIDEO_LIMIT = int(os.getenv("VIDEO_LIMIT", "20"))
-QUOTA_RESET_TIME = int(os.getenv("QUOTA_RESET_TIME", "21600"))  # 6 hours in seconds
+VIDEO_LIMIT = int(os.getenv("VIDEO_LIMIT", "20"))  # Set video limit per user
+QUOTA_RESET_TIME = 24 * 60 * 60  # Quota reset every 24 hours
 
 # ✅ Force Subscribe Setup
 id_pattern = re.compile(r'^.\d+$')
@@ -57,8 +57,21 @@ def is_protection_enabled():
 
 # ✅ **User Management**
 async def add_user(user_id):
-    if not users_collection.find_one({"id": user_id}):
-        users_collection.insert_one({"id": user_id, "joined": datetime.datetime.utcnow(), "videos_sent": 0, "quota_reset_time": time.time() + QUOTA_RESET_TIME})
+    user = users_collection.find_one({"id": user_id})
+    if not user:
+        # Initialize user with default values
+        users_collection.insert_one({
+            "id": user_id,
+            "joined": datetime.datetime.utcnow(),
+            "videos_sent": 0,  # Initialize videos_sent field
+            "quota_reset_time": time.time() + QUOTA_RESET_TIME  # Set the reset time for quota
+        })
+    else:
+        # Ensure "videos_sent" and "quota_reset_time" exist
+        if "videos_sent" not in user:
+            users_collection.update_one({"id": user_id}, {"$set": {"videos_sent": 0}})
+        if "quota_reset_time" not in user:
+            users_collection.update_one({"id": user_id}, {"$set": {"quota_reset_time": time.time() + QUOTA_RESET_TIME}})
 
 # ✅ **/users Command – Get Total Users**
 @bot.on_message(filters.command("users") & filters.user(OWNER_ID))
@@ -138,18 +151,16 @@ async def start(client, message):
 
 # ✅ **Get Random Video**
 async def send_random_video(client, chat_id):
-    user = users_collection.find_one({"id": chat_id})
-    if user:
-        # Check quota status
-        if user["videos_sent"] >= VIDEO_LIMIT and time.time() < user["quota_reset_time"]:
-            remaining_time = user["quota_reset_time"] - time.time()
-            await client.send_message(chat_id, f"⚠ You have reached your video limit. Please try again in {datetime.timedelta(seconds=int(remaining_time))}.")
-            return
-
     await refresh_video_cache()
 
     if not video_cache:
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
+        return
+
+    user = users_collection.find_one({"id": chat_id})
+    if user["videos_sent"] >= VIDEO_LIMIT and time.time() < user["quota_reset_time"]:
+        reset_time = datetime.datetime.fromtimestamp(user["quota_reset_time"]).strftime("%Y-%m-%d %H:%M:%S")
+        await client.send_message(chat_id, f"⚠️ You have reached your video limit of {VIDEO_LIMIT} videos. Your quota will reset at {reset_time}.")
         return
 
     video = video_cache.pop()
@@ -158,7 +169,7 @@ async def send_random_video(client, chat_id):
         if message and message.video:
             sent_msg = await client.send_video(chat_id, video=message.video.file_id, caption="Thanks 😊", protect_content=is_protection_enabled())
 
-            # Increment the user's video count and check for reset
+            # Update user's videos_sent count
             users_collection.update_one({"id": chat_id}, {"$inc": {"videos_sent": 1}})
 
             if AUTO_DELETE_TIME > 0:
@@ -173,6 +184,25 @@ async def send_random_video(client, chat_id):
 async def random_video_callback(client, callback_query: CallbackQuery):
     await callback_query.answer()
     asyncio.create_task(send_random_video(client, callback_query.message.chat.id))
+
+# ✅ **Quota Status**
+@bot.on_message(filters.command("quota"))
+async def quota_status(client, message):
+    user_id = message.from_user.id
+    user = users_collection.find_one({"id": user_id})
+
+    if user:
+        videos_left = max(0, VIDEO_LIMIT - user["videos_sent"])
+        time_left = user["quota_reset_time"] - time.time()
+        reset_time = datetime.datetime.fromtimestamp(user["quota_reset_time"]).strftime("%Y-%m-%d %H:%M:%S")
+
+        await message.reply_text(f"📊 **Your Quota Status:**\n"
+                                 f"📅 Quota Reset Time: {reset_time}\n"
+                                 f"🎥 Videos Sent: {user['videos_sent']}/{VIDEO_LIMIT}\n"
+                                 f"⏳ Time Until Reset: {str(datetime.timedelta(seconds=int(time_left)))}\n"
+                                 f"🕒 Videos Left: {videos_left}")
+    else:
+        await message.reply_text("⚠️ User not found! Please start the bot first.")
 
 # ✅ **Index Videos**
 @bot.on_message(filters.command("index") & filters.user(OWNER_ID))
@@ -205,18 +235,6 @@ async def index_videos(client, message):
 async def total_files(client, message):
     total_files = collection.count_documents({})
     await message.reply_text(f"📂 **Total Indexed Files:** `{total_files}`")
-
-# ✅ **/quota Command – Get User's Quota Status**
-@bot.on_message(filters.command("quota"))
-async def quota_status(client, message):
-    user = users_collection.find_one({"id": message.from_user.id})
-    if user:
-        videos_left = max(0, VIDEO_LIMIT - user["videos_sent"])
-        if user["videos_sent"] >= VIDEO_LIMIT:
-            reset_time = user["quota_reset_time"] - time.time()
-            await message.reply_text(f"⚠ You have reached your video limit. Try again in {datetime.timedelta(seconds=int(reset_time))}.")
-        else:
-            await message.reply_text(f"📊 **Quota Status:**\nVideos Left: `{videos_left}`\nQuota Reset In: {datetime.timedelta(seconds=int(user['quota_reset_time'] - time.time()))}")
 
 # ✅ **Run the Bot**
 if __name__ == "__main__":
