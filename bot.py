@@ -56,7 +56,7 @@ def is_protection_enabled():
 # ✅ **User Management**
 async def add_user(user_id):
     if not users_collection.find_one({"id": user_id}):
-        users_collection.insert_one({"id": user_id, "joined": datetime.datetime.utcnow()})
+        users_collection.insert_one({"id": user_id, "joined": datetime.datetime.utcnow(), "last_access": datetime.datetime.utcnow(), "video_count": 0})
 
 # ✅ **/users Command – Get Total Users**
 @bot.on_message(filters.command("users") & filters.user(OWNER_ID))
@@ -89,7 +89,7 @@ async def broadcast(client, message):
     start_time = time.time()
 
     for user in users:
-        user_id = user. get("id")
+        user_id = user.get("id")
         if not user_id:
             continue
             
@@ -142,6 +142,24 @@ async def send_random_video(client, chat_id):
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
         return
 
+    user = users_collection.find_one({"id": chat_id})
+    if not user:
+        await client.send_message(chat_id, "⚠ User not found!")
+        return
+
+    last_access = user.get("last_access", datetime.datetime.utcnow())
+    video_count = user.get("video_count", 0)
+
+    # Check if 6 hours have passed and reset the count if it has
+    time_diff = datetime.datetime.utcnow() - last_access
+    if time_diff.total_seconds() > 6 * 60 * 60:
+        video_count = 0
+
+    # Check if the user has reached the limit of 20 videos
+    if video_count >= 20:
+        await client.send_message(chat_id, "⚠ You have reached the limit of 20 videos in the past 6 hours. Please try again later!")
+        return
+
     video = video_cache.pop()
     try:
         message = await client.get_messages(CHANNEL_ID, video["message_id"])
@@ -151,6 +169,12 @@ async def send_random_video(client, chat_id):
             if AUTO_DELETE_TIME > 0:
                 await asyncio.sleep(AUTO_DELETE_TIME)
                 await sent_msg.delete()
+
+            # Update video count and last access time
+            users_collection.update_one(
+                {"id": chat_id},
+                {"$set": {"last_access": datetime.datetime.utcnow(), "video_count": video_count + 1}}
+            )
 
     except FloodWait as e:
         await asyncio.sleep(e.value)
