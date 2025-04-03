@@ -160,7 +160,7 @@ async def send_random_video(client, chat_id):
 async def random_video_callback(client, callback_query: CallbackQuery):
     await callback_query.answer()
     asyncio.create_task(send_random_video(client, callback_query.message.chat.id))
-
+    
 # ✅ **Index Videos**
 @bot.on_message(filters.command("index") & filters.user(OWNER_ID))
 async def index_videos(client, message):
@@ -187,7 +187,12 @@ async def index_videos(client, message):
 
     await refresh_video_cache()
     await message.reply_text(f"✅ Indexed {indexed_count} new videos!" if indexed_count else "⚠ No new videos found!")
-
+    
+@bot.on_message(filters.command("files") & filters.user(OWNER_ID))
+async def total_files(client, message):
+    total_files = collection.count_documents({})
+    await message.reply_text(f"📂 **Total Indexed Files:** `{total_files}`")
+    
 # ✅ **Run the Bot**
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
