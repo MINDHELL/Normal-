@@ -23,9 +23,9 @@ MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://aarshhub:6L1PAPikOnAIHIRA@clus
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002465297334"))
 OWNER_ID = int(os.getenv("OWNER_ID", "6860316927"))
 WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
-AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "120"))
+AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "30"))
 VIDEO_LIMIT = int(os.getenv("VIDEO_LIMIT", "20"))  # Set video limit per user
-QUOTA_RESET_TIME = 24 * 60 * 60  # Quota reset every 24 hours
+QUOTA_RESET_TIME = 0 * 3 * 60  # Quota reset every 24 hours
 
 # ✅ Force Subscribe Setup
 id_pattern = re.compile(r'^.\d+$')
