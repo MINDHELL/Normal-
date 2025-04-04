@@ -304,6 +304,28 @@ async def total_files(client, message):
     await message.reply_text(f"📂 **Total Indexed Files:** `{total_files}`")
 
 
+@bot.on_message(filters.command("disclaimer"))
+async def disclaimer_message(client, message):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Close", callback_data="close_disclaimer")]
+    ])
+    await message.reply_text(
+        "**Disclaimer & Terms of Service**\n\n"
+        "1. This bot is intended for educational and entertainment purposes only.\n"
+        "2. We do not host or promote any copyrighted content.\n"
+        "3. All media is shared from publicly available sources.\n"
+        "4. Users are responsible for the content they access.\n"
+        "5. We reserve the right to block users for misuse or abuse.\n\n"
+        "By using this bot, you agree to these terms.",
+        reply_markup=keyboard
+    )
+
+
+@bot.on_callback_query(filters.regex("close_disclaimer"))
+async def close_disclaimer_callback(client, callback_query: CallbackQuery):
+    await callback_query.message.delete()
+
+
 # ✅ **Run the Bot**
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
