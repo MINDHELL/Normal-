@@ -326,6 +326,24 @@ async def close_disclaimer_callback(client, callback_query: CallbackQuery):
     await callback_query.message.delete()
 
 
+@bot.on_message(filters.command("about"))
+async def about_command(client, message):
+    await message.reply_text(
+        text=(
+            f"<b>○ Creator : <a href='tg://user?id={OWNER_ID}'>This Person</a>\n"
+            f"○ Language : <code>Python3</code>\n"
+            f"○ Library : <a href='https://docs.pyrogram.org/'>Pyrogram asyncio {__version__}</a>\n"
+            f"○ Source Code : <a href='https://github.com/CodeXBotz/File-Sharing-Bot'>Click here</a>\n"
+            f"○ Channel : @CodeXBotz\n"
+            f"○ Support Group : @CodeXBotzSupport</b>"
+        ),
+        disable_web_page_preview=True,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔒 Close", callback_data="close")]
+        ])
+    )
+
+
 # ✅ **Run the Bot**
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
