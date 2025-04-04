@@ -18,14 +18,14 @@ logger = logging.getLogger(__name__)
 # 🔰 Environment Variables
 API_ID = int(os.getenv("API_ID", "27788368"))
 API_HASH = os.getenv("API_HASH", "9df7e9ef3d7e4145270045e5e43e1081")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7692429836:AAHyUFP6os1A3Hirisl5TV1O5kArGAlAEuQ")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7692429836:AAHyUFP6os1A3Hirisl5TV1O5kArGAlGAlE")
 MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://aarshhub:6L1PAPikOnAIHIRA@cluster0.6shiu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002465297334"))
 OWNER_ID = int(os.getenv("OWNER_ID", "6860316927"))
 WELCOME_IMAGE = os.getenv("WELCOME_IMAGE", "https://envs.sh/n9o.jpg")
-AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "30"))
+AUTO_DELETE_TIME = int(os.getenv("AUTO_DELETE_TIME", "20"))
 VIDEO_LIMIT = int(os.getenv("VIDEO_LIMIT", "20"))  # Set video limit per user
-QUOTA_RESET_TIME = 0 * 3 * 60  # Quota reset every 24 hours
+DEFAULT_QUOTA_RESET_TIME = int(os.getenv("DEFAULT_QUOTA_RESET_TIME", "86400"))  # Default quota reset time in seconds (24 hours)
 
 # ✅ Force Subscribe Setup
 id_pattern = re.compile(r'^.\d+$')
@@ -64,14 +64,14 @@ async def add_user(user_id):
             "id": user_id,
             "joined": datetime.datetime.utcnow(),
             "videos_sent": 0,  # Initialize videos_sent field
-            "quota_reset_time": time.time() + QUOTA_RESET_TIME  # Set the reset time for quota
+            "quota_reset_time": time.time() + DEFAULT_QUOTA_RESET_TIME  # Set the reset time for quota
         })
     else:
         # Ensure "videos_sent" and "quota_reset_time" exist
         if "videos_sent" not in user:
             users_collection.update_one({"id": user_id}, {"$set": {"videos_sent": 0}})
         if "quota_reset_time" not in user:
-            users_collection.update_one({"id": user_id}, {"$set": {"quota_reset_time": time.time() + QUOTA_RESET_TIME}})
+            users_collection.update_one({"id": user_id}, {"$set": {"quota_reset_time": time.time() + DEFAULT_QUOTA_RESET_TIME}})
 
 # ✅ **/users Command – Get Total Users**
 @bot.on_message(filters.command("users") & filters.user(OWNER_ID))
@@ -141,13 +141,17 @@ async def start(client, message):
         except UserNotParticipant:
             btn.append([InlineKeyboardButton(f'Join {chat.title}', url=chat.invite_link)])
             btn.append([InlineKeyboardButton("♻️ Try Again ♻️", url=f"https://t.me/{client.me.username}?start=true")])
-            await message.reply_text(f"👋 **Hello {message.from_user.mention},**\n\nJoin the channel and click 'Try Again'.", reply_markup=InlineKeyboardMarkup(btn))
+            await message.reply_text(
+                f"👋 **Hello {message.from_user.mention},**\n\nJoin the channel and click 'Try Again'.",
+                reply_markup=InlineKeyboardMarkup(btn),
+            )
             return
         except Exception:
             pass
 
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")]])
     await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Video Bot!", reply_markup=keyboard)
+
 
 # ✅ **Get Random Video**
 async def send_random_video(client, chat_id):
@@ -157,20 +161,30 @@ async def send_random_video(client, chat_id):
         await client.send_message(chat_id, "⚠ No videos available. Use /index first!")
         return
 
-    user = users_collection.find_one({"id": chat_id})
+    # Check if user is the owner (unlimited quota)
+    if chat_id == OWNER_ID:
+        user = {"videos_sent": 0, "quota_reset_time": time.time()}
+    else:
+        user = users_collection.find_one({"id": chat_id})
+
     if user["videos_sent"] >= VIDEO_LIMIT and time.time() < user["quota_reset_time"]:
         reset_time = datetime.datetime.fromtimestamp(user["quota_reset_time"]).strftime("%Y-%m-%d %H:%M:%S")
-        await client.send_message(chat_id, f"⚠️ You have reached your video limit of {VIDEO_LIMIT} videos. Your quota will reset at {reset_time}.")
+        await client.send_message(
+            chat_id,
+            f"⚠️ You have reached your video limit of {VIDEO_LIMIT} videos. Your quota will reset at {reset_time}.",
+        )
         return
 
     video = video_cache.pop()
     try:
         message = await client.get_messages(CHANNEL_ID, video["message_id"])
         if message and message.video:
-            sent_msg = await client.send_video(chat_id, video=message.video.file_id, caption="Thanks 😊", protect_content=is_protection_enabled())
+            sent_msg = await client.send_video(
+                chat_id, video=message.video.file_id, caption="Thanks 😊", protect_content=is_protection_enabled()
+            )
 
-            # Update user's videos_sent count
-            users_collection.update_one({"id": chat_id}, {"$inc": {"videos_sent": 1}})
+            if chat_id != OWNER_ID:  # Only update quota for non-owner users
+                users_collection.update_one({"id": chat_id}, {"$inc": {"videos_sent": 1}})
 
             if AUTO_DELETE_TIME > 0:
                 await asyncio.sleep(AUTO_DELETE_TIME)
@@ -180,29 +194,54 @@ async def send_random_video(client, chat_id):
         await asyncio.sleep(e.value)
         await send_random_video(client, chat_id)
 
+
 @bot.on_callback_query(filters.regex("get_random_video"))
 async def random_video_callback(client, callback_query: CallbackQuery):
     await callback_query.answer()
     asyncio.create_task(send_random_video(client, callback_query.message.chat.id))
 
+
 # ✅ **Quota Status**
 @bot.on_message(filters.command("quota"))
 async def quota_status(client, message):
     user_id = message.from_user.id
-    user = users_collection.find_one({"id": user_id})
+    if user_id == OWNER_ID:
+        await message.reply_text("✅ **You are the owner and have unlimited quota!**")
+        return
 
+    user = users_collection.find_one({"id": user_id})
     if user:
         videos_left = max(0, VIDEO_LIMIT - user["videos_sent"])
         time_left = user["quota_reset_time"] - time.time()
         reset_time = datetime.datetime.fromtimestamp(user["quota_reset_time"]).strftime("%Y-%m-%d %H:%M:%S")
 
-        await message.reply_text(f"📊 **Your Quota Status:**\n"
-                                 f"📅 Quota Reset Time: {reset_time}\n"
-                                 f"🎥 Videos Sent: {user['videos_sent']}/{VIDEO_LIMIT}\n"
-                                 f"⏳ Time Until Reset: {str(datetime.timedelta(seconds=int(time_left)))}\n"
-                                 f"🕒 Videos Left: {videos_left}")
+        await message.reply_text(
+            f"📊 **Your Quota Status:**\n"
+            f"📅 Quota Reset Time: {reset_time}\n"
+            f"🎥 Videos Sent: {user['videos_sent']}/{VIDEO_LIMIT}\n"
+            f"⏳ Time Until Reset: {str(datetime.timedelta(seconds=int(time_left)))}\n"
+            f"🕒 Videos Left: {videos_left}"
+        )
     else:
         await message.reply_text("⚠️ User not found! Please start the bot first.")
+
+
+# ✅ **Set Quota Duration (Only for Owner)**
+@bot.on_message(filters.command("setquota") & filters.user(OWNER_ID))
+async def set_quota_duration(client, message):
+    try:
+        _, hours = message.text.split()
+        hours = int(hours)
+        new_quota_reset_time = hours * 60 * 60  # Convert hours to seconds
+
+        settings_collection.update_one(
+            {"_id": "quota_settings"}, {"$set": {"quota_reset_time": new_quota_reset_time}}, upsert=True
+        )
+
+        await message.reply_text(f"✅ **Quota reset duration updated to {hours} hours!**")
+    except (ValueError, IndexError):
+        await message.reply_text("⚠ Usage: `/setquota <hours>` (e.g., `/setquota 6` for 6 hours)")
+
 
 # ✅ **Index Videos**
 @bot.on_message(filters.command("index") & filters.user(OWNER_ID))
@@ -216,7 +255,9 @@ async def index_videos(client, message):
     while True:
         try:
             messages = await client.get_messages(CHANNEL_ID, list(range(last_message_id, last_message_id + 100)))
-            video_entries = [{"message_id": msg.id} for msg in messages if msg and msg.video and not collection.find_one({"message_id": msg.id})]
+            video_entries = [
+                {"message_id": msg.id} for msg in messages if msg and msg.video and not collection.find_one({"message_id": msg.id})
+            ]
 
             if video_entries:
                 collection.insert_many(video_entries)
@@ -231,12 +272,14 @@ async def index_videos(client, message):
     await refresh_video_cache()
     await message.reply_text(f"✅ Indexed {indexed_count} new videos!" if indexed_count else "⚠ No new videos found!")
 
+
 @bot.on_message(filters.command("files") & filters.user(OWNER_ID))
 async def total_files(client, message):
     total_files = collection.count_documents({})
     await message.reply_text(f"📂 **Total Indexed Files:** `{total_files}`")
 
+
 # ✅ **Run the Bot**
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
-    bot.run()
+    bot.run()  
