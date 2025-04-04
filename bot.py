@@ -319,7 +319,7 @@ async def disclaimer_message(client, message):
         "By using this bot, you agree to these terms.",
         reply_markup=keyboard
     )
-
+    
 
 @bot.on_callback_query(filters.regex("close_disclaimer"))
 async def close_disclaimer_callback(client, callback_query: CallbackQuery):
@@ -332,7 +332,7 @@ async def about_command(client, message):
         text=(
             f"<b>○ Creator : <a href='tg://user?id={OWNER_ID}'>This Person</a>\n"
             f"○ Language : <code>Python3</code>\n"
-            f"○ Library : <a href='https://docs.pyrogram.org/'>Pyrogram asyncio {__version__}</a>\n"
+            f"○ Library : <a href='https://docs.pyrogram.org/'>Pyrogram asyncio </a>\n"
             f"○ Source Code : <a href='https://github.com/CodeXBotz/File-Sharing-Bot'>Click here</a>\n"
             f"○ Channel : @CodeXBotz\n"
             f"○ Support Group : @CodeXBotzSupport</b>"
@@ -342,6 +342,16 @@ async def about_command(client, message):
             [InlineKeyboardButton("🔒 Close", callback_data="close")]
         ])
     )
+
+@bot.on_callback_query()
+async def handle_close_button(client, query: CallbackQuery):
+    if query.data == "close":
+        await query.message.delete()
+        try:
+            await query.message.reply_to_message.delete()
+        except:
+            pass
+
 
 
 # ✅ **Run the Bot**
