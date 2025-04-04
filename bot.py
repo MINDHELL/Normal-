@@ -258,6 +258,16 @@ async def set_quota_duration(client, message):
         await message.reply_text("⚠ Usage: `/setquota <hours>` (e.g., `/setquota 6` for 6 hours)")
 
 
+@bot.on_message(filters.command("getquota") & filters.user(OWNER_ID))
+async def get_quota_setting(client, message):
+    settings = settings_collection.find_one({"_id": "quota_settings"})
+    if settings and "quota_reset_time" in settings:
+        duration = str(datetime.timedelta(seconds=settings["quota_reset_time"]))
+        await message.reply_text(f"⏱ **Current quota reset duration:** `{duration}`")
+    else:
+        await message.reply_text("⚠ No custom quota reset duration set.")
+        
+
 # ✅ **Index Videos**
 @bot.on_message(filters.command("index") & filters.user(OWNER_ID))
 async def index_videos(client, message):
