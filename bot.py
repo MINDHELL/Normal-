@@ -150,7 +150,7 @@ async def start(client, message):
             pass
 
     keyboard = InlineKeyboardMarkup([[InlineKeyboardButton("🎥 Get Random Video", callback_data="get_random_video")]])
-    await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Video Bot!", reply_markup=keyboard)
+    await message.reply_photo(WELCOME_IMAGE, caption="🎉 Welcome to the Video Bot!\n\n<b>𝖳𝗁𝗂𝗌 𝖡𝗈𝗍 𝖢𝗈𝗇𝗍𝖺𝗂𝗇𝗌 18+ 𝖢𝗈𝗇𝗍𝖾𝗇𝗍 𝖲𝗈 𝖪𝗂𝗇𝖽𝗅𝗒 𝖠𝖼𝖼𝖾𝗌𝗌 𝖨𝗍 𝖶𝗂𝗍𝗁 𝖸𝗈𝗎𝗋 𝖮𝗐𝗇 𝖱𝗂𝗌𝗄. 𝖳𝗁𝖾 𝖬𝖺𝗍𝖾𝗋𝗂𝖺𝗅 𝖬𝖺𝗒 𝖨𝗇𝖼𝗅𝗎𝖽𝖾 𝖤𝗑𝗉𝗅𝗂𝖼𝗂𝗍 𝖮𝗋 𝖦𝗋𝖺𝗉𝗁𝗂𝖼 𝖢𝗈𝗇𝗍𝖺𝖼𝗍 𝖳𝗁𝖺𝗍 𝖨𝗌 𝖴𝗇𝗌𝗎𝗂𝗍𝖺𝖻𝗅𝖾 𝖥𝗈𝗋 𝖬𝗂𝗇𝗈𝗋𝗌. 𝖲𝗈 𝖢𝗁𝗂𝗅𝖽𝗋𝖾𝗇𝗌 𝖯𝗅𝖾𝖺𝗌𝖾 𝖲𝗍𝖺𝗒 𝖠𝗐𝖺𝗒.</b>\n\n 𝖯𝗅𝖾𝖺𝗌𝖾 𝖢𝗁𝖾𝖼𝗄 Disclaimer and About 𝖡𝖾𝖿𝗈𝗋𝖾 𝖴𝗌𝗂𝗇𝗀 𝖳𝗁𝗂𝗌 𝖡𝗈𝗍..\n\n ", reply_markup=keyboard)
 
 
 # ✅ **Get Random Video**
@@ -258,6 +258,16 @@ async def set_quota_duration(client, message):
         await message.reply_text("⚠ Usage: `/setquota <hours>` (e.g., `/setquota 6` for 6 hours)")
 
 
+@bot.on_message(filters.command("getquota") & filters.user(OWNER_ID))
+async def get_quota_setting(client, message):
+    settings = settings_collection.find_one({"_id": "quota_settings"})
+    if settings and "quota_reset_time" in settings:
+        duration = str(datetime.timedelta(seconds=settings["quota_reset_time"]))
+        await message.reply_text(f"⏱ **Current quota reset duration:** `{duration}`")
+    else:
+        await message.reply_text("⚠ No custom quota reset duration set.")
+        
+
 # ✅ **Index Videos**
 @bot.on_message(filters.command("index") & filters.user(OWNER_ID))
 async def index_videos(client, message):
@@ -292,6 +302,56 @@ async def index_videos(client, message):
 async def total_files(client, message):
     total_files = collection.count_documents({})
     await message.reply_text(f"📂 **Total Indexed Files:** `{total_files}`")
+
+
+@bot.on_message(filters.command("disclaimer"))
+async def disclaimer_message(client, message):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("❌ Close", callback_data="close_disclaimer")]
+    ])
+    await message.reply_text(
+        "**Disclaimer & Terms of Service**\n\n"
+        "1. This bot is intended for educational and entertainment purposes only.\n"
+        "2. We do not host or promote any copyrighted content.\n"
+        "3. All media is shared from publicly available sources.\n"
+        "4. Users are responsible for the content they access.\n"
+        "5. We reserve the right to block users for misuse or abuse.\n\n"
+        "By using this bot, you agree to these terms.",
+        reply_markup=keyboard
+    )
+    
+
+@bot.on_callback_query(filters.regex("close_disclaimer"))
+async def close_disclaimer_callback(client, callback_query: CallbackQuery):
+    await callback_query.message.delete()
+
+
+@bot.on_message(filters.command("about"))
+async def about_command(client, message):
+    await message.reply_text(
+        text=(
+            f"<b>○ Creator : <a href='tg://user?id={OWNER_ID}'>This Person</a>\n"
+            f"○ Language : <code>Python3</code>\n"
+            f"○ Library : <a href='https://docs.pyrogram.org/'>Pyrogram asyncio </a>\n"
+            f"○ Source Code : <a href='https://github.com/CodeXBotz/File-Sharing-Bot'>Click here</a>\n"
+            f"○ Channel : @CodeXBotz\n"
+            f"○ Support Group : @CodeXBotzSupport</b>"
+        ),
+        disable_web_page_preview=True,
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔒 Close", callback_data="close")]
+        ])
+    )
+
+@bot.on_callback_query()
+async def handle_close_button(client, query: CallbackQuery):
+    if query.data == "close":
+        await query.message.delete()
+        try:
+            await query.message.reply_to_message.delete()
+        except:
+            pass
+
 
 
 # ✅ **Run the Bot**
