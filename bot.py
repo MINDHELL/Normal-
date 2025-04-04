@@ -6,7 +6,7 @@ import time
 import re
 import datetime
 from pyrogram import Client, filters
-from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
+from pyrogram.types import InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery, BotCommand
 from pymongo import MongoClient
 from pyrogram.errors import InputUserDeactivated, UserNotParticipant, FloodWait, UserIsBlocked, PeerIdInvalid
 from health_check import start_health_check
@@ -212,10 +212,19 @@ async def quota_status(client, message):
     user = users_collection.find_one({"id": user_id})
     if user:
         videos_left = max(0, VIDEO_LIMIT - user["videos_sent"])
-        time_left = user["quota_reset_time"] - time.time()
-        reset_time = datetime.datetime.fromtimestamp(user["quota_reset_time"]).strftime("%Y-%m-%d %H:%M:%S")
-
-        await message.reply_text(
+        current_time = time.time()
+        
+        # If the quota reset time has already passed, reset it
+        if current_time > user["quota_reset_time"]:
+            new_reset_time = current_time + settings_collection.find_one({"_id": "quota_settings"})["quota_reset_time"]
+            users_collection.update_one({"id": user_id}, {"$set": {"quota_reset_time": new_reset_time, "videos_sent": 0}})
+        else:
+            new_reset_time = user["quota_reset_time"]
+            
+            reset_time = datetime.datetime.fromtimestamp(new_reset_time).strftime("%Y-%m-%d %H:%M:%S")
+            time_left = max(0, new_reset_time - current_time)
+            
+            await message.reply_text(
             f"📊 **Your Quota Status:**\n"
             f"📅 Quota Reset Time: {reset_time}\n"
             f"🎥 Videos Sent: {user['videos_sent']}/{VIDEO_LIMIT}\n"
@@ -236,6 +245,12 @@ async def set_quota_duration(client, message):
 
         settings_collection.update_one(
             {"_id": "quota_settings"}, {"$set": {"quota_reset_time": new_quota_reset_time}}, upsert=True
+        )
+        
+        # Update all users' quota reset time immediately
+        current_time = time.time()
+        users_collection.update_many(
+            {}, {"$set": {"quota_reset_time": current_time + new_quota_reset_time}}
         )
 
         await message.reply_text(f"✅ **Quota reset duration updated to {hours} hours!**")
@@ -282,4 +297,4 @@ async def total_files(client, message):
 # ✅ **Run the Bot**
 if __name__ == "__main__":
     threading.Thread(target=start_health_check, daemon=True).start()
-    bot.run()  
+    bot.run()
