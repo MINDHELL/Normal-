@@ -18,7 +18,7 @@ logger = logging.getLogger(__name__)
 # 🔰 Environment Variables
 API_ID = int(os.getenv("API_ID", "27788368"))
 API_HASH = os.getenv("API_HASH", "9df7e9ef3d7e4145270045e5e43e1081")
-BOT_TOKEN = os.getenv("BOT_TOKEN", "7692429836:AAHyUFP6os1A3Hirisl5TV1O5kArGAlGAlE")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "7692429836:AAFhPqKJghT0G524pxCobrj-XfiXefTGnmA")
 MONGO_URL = os.getenv("MONGO_URL", "mongodb+srv://aarshhub:6L1PAPikOnAIHIRA@cluster0.6shiu.mongodb.net/?retryWrites=true&w=majority&appName=Cluster0")
 CHANNEL_ID = int(os.getenv("CHANNEL_ID", "-1002465297334"))
 OWNER_ID = int(os.getenv("OWNER_ID", "6860316927"))
